@@ -1,1 +1,41 @@
 # BDH
+
+Configurable PyTorch language-model training environment with YAML-defined
+models, data modules, callbacks, loggers, and trainers.
+
+## Quick start
+
+```bash
+uv run python main.py validate configs/tiny_shakespeare.yaml
+uv run python main.py train configs/tiny_shakespeare.yaml
+```
+
+The example downloads Tiny Shakespeare if it is not already present. New runs
+are created under `runs/` and contain the resolved YAML configuration, logs,
+TensorBoard events, and checkpoints.
+
+Override configuration values without editing YAML:
+
+```bash
+uv run python main.py train configs/tiny_shakespeare.yaml \
+  --set trainer.max_epochs=20 \
+  --set model.params.d_model=384
+```
+
+Resume a run from its latest complete checkpoint:
+
+```bash
+uv run python main.py resume runs/20260812-120000-a1b2c3 \
+  --set trainer.max_epochs=40
+```
+
+The original BDH architecture is registered as `bdh`; the configurable causal
+Transformer reference model is registered as `bdh_transformer`. Custom
+components can register themselves from Python modules listed in the YAML
+`plugins` list.
+
+Run the tests with:
+
+```bash
+uv run python -m unittest discover -v
+```

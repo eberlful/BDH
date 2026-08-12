@@ -1,0 +1,32 @@
+[project]
+name = "bdh"
+version = "0.1.0"
+description = "Configurable PyTorch language-model training environment"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "numpy>=2.5.2",
+    "pyyaml>=6.0.3",
+    "requests>=2.34.2",
+    "rich>=15.0.0",
+    "tensorboard>=2.21.0",
+    "tiktoken>=0.13.0",
+    "torch>=2.13.0",
+]
+
+[project.scripts]
+bdh = "main:main"
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = ["main"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
+
+[tool.uv]
+exclude-newer = "3d"

@@ -1,0 +1,45 @@
+seed: 42
+device: auto
+runs_dir: runs
+
+model:
+  name: bdh_transformer
+  params:
+    vocab_size: auto
+    context_length: 256
+    d_model: 256
+    n_heads: 8
+    n_layers: 6
+    dropout: 0.1
+    learning_rate: 0.0003
+    weight_decay: 0.1
+
+data:
+  name: tiny_shakespeare
+  params:
+    input_file_path: data/tinyshakespeare.txt
+    data_url: https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt
+    tokenizer: gpt2
+    context_length: 256
+    batch_size: 32
+    validation_fraction: 0.1
+    num_workers: 0
+
+trainer:
+  name: torch
+  max_epochs: 10
+  log_every_n_steps: 10
+  validate_every_n_epochs: 1
+  gradient_clip_norm: 1.0
+  gradient_accumulation_steps: 1
+
+callbacks:
+  - name: checkpoint
+    params:
+      save_best: true
+
+loggers:
+  - name: terminal
+  - name: text_file
+  - name: tensorboard
+

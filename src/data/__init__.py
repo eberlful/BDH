@@ -1,6 +1,5 @@
 """Data modules."""
 
-from .data import TinyShakespeareDataModule
+from .data import SudokuDataModule, TinyShakespeareDataModule
 
-__all__ = ["TinyShakespeareDataModule"]
-
+__all__ = ["SudokuDataModule", "TinyShakespeareDataModule"]

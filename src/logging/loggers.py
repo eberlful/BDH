@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from rich.console import Console
+from rich.progress import BarColumn, Progress, TaskProgressColumn, TextColumn
 from rich.table import Table
 from torch.utils.tensorboard import SummaryWriter
 
@@ -30,9 +31,50 @@ class TerminalLogger(BaseLogger):
     def __init__(self, run_dir: Path | None = None, **kwargs: Any) -> None:
         super().__init__(run_dir, **kwargs)
         self.console = Console()
+        self.progress: Progress | None = None
+        self.epoch_task_id: int | None = None
 
     def log_hyperparameters(self, parameters: Mapping[str, Any]) -> None:
         self.console.print(f"[bold green]Run directory:[/bold green] {self.run_dir}")
+
+    def on_train_start(self, trainer: BaseTrainer) -> None:
+        total_epochs = max(0, int(getattr(trainer, "max_epochs", 0)))
+        completed_epochs = min(total_epochs, max(0, int(getattr(trainer.state, "epoch", 0))))
+        self.progress = Progress(
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TaskProgressColumn(),
+            TextColumn("remaining: {task.fields[remaining]}"),
+            TextColumn("{task.fields[metrics]}"),
+            console=self.console,
+        )
+        self.progress.start()
+        self.epoch_task_id = self.progress.add_task(
+            "Epochs",
+            total=total_epochs,
+            completed=completed_epochs,
+            remaining=total_epochs - completed_epochs,
+            metrics="",
+        )
+
+    def on_epoch_end(self, trainer: BaseTrainer, epoch: int, metrics: Mapping[str, float]) -> None:
+        if self.progress is None or self.epoch_task_id is None:
+            return
+        completed_epochs = min(self.progress.tasks[self.epoch_task_id].total, trainer.state.epoch)
+        remaining = max(0, int(self.progress.tasks[self.epoch_task_id].total - completed_epochs))
+        metric_text = " ".join(
+            f"{key}={value:.4f}" for key, value in _scalar_metrics(metrics).items()
+        )
+        self.progress.update(
+            self.epoch_task_id,
+            completed=completed_epochs,
+            remaining=remaining,
+            metrics=metric_text,
+        )
+
+    def on_train_end(self, trainer: BaseTrainer) -> None:
+        if self.progress is not None:
+            self.progress.stop()
 
     def log_metrics(self, metrics: Mapping[str, float], step: int) -> None:
         table = Table(show_header=False, box=None, padding=(0, 1))
@@ -100,4 +142,3 @@ class TensorBoardLogger(BaseLogger):
 
     def close(self) -> None:
         self.writer.close()
-

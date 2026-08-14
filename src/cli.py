@@ -11,6 +11,7 @@ from typing import Any
 import torch
 
 from .core.config import dump_config, load_config, load_plugin_modules, validate_config
+from .data.data import encode_sudoku_prompt
 from .runtime import build_components, component_signature, create_run_dir, seed_everything, write_run_metadata
 
 
@@ -93,21 +94,27 @@ def run_generate(run_dir: Path, prompt: str, max_tokens: int) -> int:
     config = _validate_and_load(config_path, [])
     trainer = build_components(config, run_dir)
     trainer.setup()
-    tokenizer = getattr(trainer.data_module, "tokenizer", None)
-    if tokenizer is None or not callable(getattr(tokenizer, "encode", None)) or not callable(
-        getattr(tokenizer, "decode", None)
-    ):
-        raise ValueError("Generate mode requires a text data module exposing tokenizer.encode/decode.")
+    if config["data"]["name"] == "sudoku":
+        token_ids = encode_sudoku_prompt(prompt)
+    else:
+        tokenizer = getattr(trainer.data_module, "tokenizer", None)
+        if tokenizer is None or not callable(getattr(tokenizer, "encode", None)) or not callable(
+            getattr(tokenizer, "decode", None)
+        ):
+            raise ValueError("Generate mode requires a text data module exposing tokenizer.encode/decode.")
+        token_ids = tokenizer.encode(prompt, allowed_special={"<|endoftext|>"})
+        if not token_ids:
+            raise ValueError("Prompt must contain at least one token.")
 
-    token_ids = tokenizer.encode(prompt, allowed_special={"<|endoftext|>"})
-    if not token_ids:
-        raise ValueError("Prompt must contain at least one token.")
     input_ids = torch.tensor([token_ids], dtype=torch.long, device=trainer.device)
     trainer.restore_checkpoint(checkpoint_path)
     trainer.model.eval()
     with torch.inference_mode():
         generated = trainer.model.generate(input_ids, max_new_tokens=max_tokens)
-    print(tokenizer.decode(generated[0].tolist()))
+    if config["data"]["name"] == "sudoku":
+        print(" ".join(str(token) for token in generated[0].tolist()))
+    else:
+        print(tokenizer.decode(generated[0].tolist()))
     return 0
 
 

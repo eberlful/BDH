@@ -17,6 +17,7 @@ from src.data.data import (
     SUDOKU_SEPARATOR_TOKEN,
     SudokuDataModule,
     TinyShakespeareDataModule,
+    encode_sudoku_prompt,
     is_valid_sudoku_board,
 )
 from src.model.bdh import BDHTransformer
@@ -103,6 +104,15 @@ class TrainingEnvironmentTests(unittest.TestCase):
             self.assertEqual(positions, expected_positions)
             self.assertEqual(values, [example.solution[index] for index in expected_positions])
 
+    def test_sudoku_prompt_encoding_validates_and_appends_separator(self) -> None:
+        prompt = "530070000600195000098000060800060003400803001700020006060000280000419005000080079"
+        encoded = encode_sudoku_prompt(prompt)
+        self.assertEqual(encoded[:81], [int(value) for value in prompt])
+        self.assertEqual(encoded[-1], SUDOKU_SEPARATOR_TOKEN)
+        for invalid in (prompt[:-1], prompt[:80] + "x", "550070000" + prompt[9:]):
+            with self.assertRaisesRegex(ValueError, "Sudoku prompt"):
+                encode_sudoku_prompt(invalid)
+
     def test_sudoku_data_is_seeded_and_batches_are_in_range(self) -> None:
         first = SudokuDataModule(num_samples=6, validation_fraction=0.5, clues=70, context_length=128, seed=5)
         second = SudokuDataModule(num_samples=6, validation_fraction=0.5, clues=70, context_length=128, seed=5)
@@ -151,6 +161,50 @@ class TrainingEnvironmentTests(unittest.TestCase):
             trainer = build_components(config, Path(directory) / "run")
             trainer.fit()
             self.assertEqual(trainer.state.global_step, 1)
+
+    def test_sudoku_generation_from_best_checkpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            run_dir = root / "run"
+            config = {
+                "seed": 3,
+                "device": "cpu",
+                "model": {
+                    "name": "bdh_transformer",
+                    "params": {
+                        "vocab_size": "auto",
+                        "context_length": 128,
+                        "d_model": 16,
+                        "n_heads": 4,
+                        "n_layers": 1,
+                    },
+                },
+                "data": {
+                    "name": "sudoku",
+                    "params": {
+                        "num_samples": 4,
+                        "validation_fraction": 0.5,
+                        "clues": 70,
+                        "context_length": 128,
+                        "batch_size": 2,
+                    },
+                },
+                "trainer": {"name": "torch", "max_epochs": 1, "max_steps": 1},
+                "callbacks": [{"name": "checkpoint", "params": {"save_best": True}}],
+                "loggers": [],
+            }
+            trainer = build_components(config, run_dir)
+            trainer.fit()
+            (run_dir / "config.yaml").write_text(yaml.safe_dump(config), encoding="utf-8")
+
+            prompt = "534678912672195348198342567859761423426853791713924856961537284287419635345286179"
+            output = io.StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(run_generate(run_dir, prompt, 3), 0)
+            tokens = [int(token) for token in output.getvalue().split()]
+            self.assertEqual(tokens[:81], [int(value) for value in prompt])
+            self.assertEqual(tokens[81], SUDOKU_SEPARATOR_TOKEN)
+            self.assertEqual(len(tokens), 84)
 
     def test_short_training_creates_checkpoints_and_logs(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

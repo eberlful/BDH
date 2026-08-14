@@ -45,6 +45,24 @@ SUDOKU_END_TOKEN = SUDOKU_SEPARATOR_TOKEN + 1
 SUDOKU_VOCAB_SIZE = SUDOKU_END_TOKEN + 1
 
 
+def encode_sudoku_prompt(prompt: str) -> list[int]:
+    """Validate and encode an 81-character Sudoku grid for causal inference."""
+    if len(prompt) != SUDOKU_CELL_COUNT:
+        raise ValueError(f"Sudoku prompt must contain exactly {SUDOKU_CELL_COUNT} characters.")
+    if any(character not in "0123456789" for character in prompt):
+        raise ValueError("Sudoku prompt may contain only digits 0-9.")
+
+    board = [int(character) for character in prompt]
+    expected = set(range(1, SUDOKU_SIZE + 1))
+    for unit in SUDOKU_UNITS:
+        clues = [board[index] for index in unit if board[index] != 0]
+        if len(clues) != len(set(clues)):
+            raise ValueError("Sudoku prompt contains contradictory clues.")
+        if any(value not in expected for value in clues):
+            raise ValueError("Sudoku prompt contains an invalid clue.")
+    return [*board, SUDOKU_SEPARATOR_TOKEN]
+
+
 @dataclass(frozen=True)
 class SudokuExample:
     """A generated Sudoku puzzle, solution, and serialized completion trace."""

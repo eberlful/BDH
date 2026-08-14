@@ -40,6 +40,18 @@ Generation requires `checkpoints/best.pt` and a text data module with a
 tokenizer. The token limit counts newly generated tokens; the prompt is
 included in the printed output.
 
+For Sudoku runs, pass an 81-character grid using `0` for blank cells. The
+command prints the raw serialized Sudoku token sequence:
+
+```bash
+uv run python main.py generate runs/20260812-120000-a1b2c3 \
+  530070000600195000098000060800060003400803001700020006060000280000419005000080079 \
+  --max-tokens 103
+```
+
+Use `2 * blank_count + 1` for `--max-tokens` to request all position/value
+pairs and the end token.
+
 The original BDH architecture is registered as `bdh`; the configurable causal
 Transformer reference model is registered as `bdh_transformer`. Custom
 components can register themselves from Python modules listed in the YAML

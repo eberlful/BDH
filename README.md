@@ -93,6 +93,36 @@ uv run python main.py train configs/bdh_cq.yaml \
   --set model.params.loss_schedule=ramp
 ```
 
+For WikiText language modeling runs (zero-disk streaming from Hugging Face):
+
+```bash
+uv run python main.py train configs/wikitext.yaml
+```
+
+Override dataset configurations or context lengths:
+
+```bash
+uv run python main.py train configs/wikitext.yaml \
+  --set data.params.dataset_config=wikitext-103-raw-v1 \
+  --set data.params.context_length=512
+```
+
+For TinyStories synthetic narrative reasoning runs:
+
+```bash
+uv run python main.py train configs/tiny_stories.yaml
+```
+
+Configure sample limits and memory streaming:
+- `data.params.max_train_samples`: Maximum training stories to stream into memory (default: 100,000 to keep RAM <200MB).
+- `data.params.in_memory`: Set to `true` (default) for zero-disk streaming without writing Arrow files to disk.
+
+```bash
+uv run python main.py train configs/tiny_stories.yaml \
+  --set data.params.max_train_samples=50000 \
+  --set trainer.max_epochs=5
+```
+
 The original BDH architecture is registered as `bdh`; the contextual-query recurrent reasoning architecture is registered as `bdh_cq`; and the configurable causal Transformer reference model is registered as `bdh_transformer`. Custom components can register themselves from Python modules listed in the YAML `plugins` list.
 
 Run the tests with:

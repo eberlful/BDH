@@ -1,12 +1,13 @@
-from __future__ import annotations
-
+from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 
 import datasets
 import torch
+import yaml
 
+from src.cli import run_train, run_validate
 from src.core.registry import DATA_REGISTRY, load_builtin_components
 from src.data.data import TokenBlockDataset
 from src.data.hf import (
@@ -324,6 +325,124 @@ class HuggingFaceDataModuleTests(unittest.TestCase):
             self.assertTrue(torch.isfinite(step_output["loss"]))
 
 
+    def test_cli_train_wikitext_multi_step(self) -> None:
+        mock_data = [{"text": f" = Article {i} = \nDetailed text content for article {i}.\n"} for i in range(20)]
+
+        def fake_load_dataset(name, *args, **kwargs):
+            return iter(mock_data)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config_path = root / "config.yaml"
+            config = {
+                "seed": 42,
+                "device": "cpu",
+                "runs_dir": str(root / "runs"),
+                "model": {
+                    "name": "bdh_transformer",
+                    "params": {
+                        "vocab_size": "auto",
+                        "context_length": 16,
+                        "d_model": 16,
+                        "n_heads": 4,
+                        "n_layers": 1,
+                    },
+                },
+                "data": {
+                    "name": "wikitext",
+                    "params": {
+                        "dataset_config": "wikitext-2-raw-v1",
+                        "tokenizer": "byte",
+                        "context_length": 16,
+                        "batch_size": 2,
+                        "in_memory": True,
+                    },
+                },
+                "trainer": {
+                    "name": "torch",
+                    "max_epochs": 1,
+                    "max_steps": 3,
+                    "log_every_n_steps": 1,
+                },
+                "callbacks": [{"name": "checkpoint", "params": {"save_best": True}}],
+                "loggers": [{"name": "text_file", "params": {}}],
+            }
+            config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
+
+            with patch("datasets.load_dataset", side_effect=fake_load_dataset):
+                self.assertEqual(run_validate(config_path, []), 0)
+                self.assertEqual(run_train(config_path, []), 0)
+
+            run_dirs = list((root / "runs").iterdir())
+            self.assertEqual(len(run_dirs), 1)
+            run_dir = run_dirs[0]
+            self.assertTrue((run_dir / "checkpoints" / "last.pt").exists())
+            self.assertTrue((run_dir / "checkpoints" / "best.pt").exists())
+            self.assertTrue((run_dir / "resolved_config.yaml").exists())
+            self.assertTrue((run_dir / "training.log").exists())
+
+    def test_cli_train_tinystories_multi_step(self) -> None:
+        mock_stories = [
+            {"text": f"Once upon a time, tiny animal {i} had a wonderful adventure in the forest."}
+            for i in range(25)
+        ]
+
+        def fake_load_dataset(name, *args, **kwargs):
+            return iter(mock_stories)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config_path = root / "config.yaml"
+            config = {
+                "seed": 42,
+                "device": "cpu",
+                "runs_dir": str(root / "runs"),
+                "model": {
+                    "name": "bdh_transformer",
+                    "params": {
+                        "vocab_size": "auto",
+                        "context_length": 16,
+                        "d_model": 16,
+                        "n_heads": 4,
+                        "n_layers": 1,
+                    },
+                },
+                "data": {
+                    "name": "tiny_stories",
+                    "params": {
+                        "tokenizer": "byte",
+                        "context_length": 16,
+                        "batch_size": 2,
+                        "max_train_samples": 20,
+                        "max_val_samples": 5,
+                        "in_memory": True,
+                    },
+                },
+                "trainer": {
+                    "name": "torch",
+                    "max_epochs": 1,
+                    "max_steps": 3,
+                    "log_every_n_steps": 1,
+                },
+                "callbacks": [{"name": "checkpoint", "params": {"save_best": True}}],
+                "loggers": [{"name": "text_file", "params": {}}],
+            }
+            config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
+
+            with patch("datasets.load_dataset", side_effect=fake_load_dataset):
+                self.assertEqual(run_validate(config_path, []), 0)
+                self.assertEqual(run_train(config_path, []), 0)
+
+            run_dirs = list((root / "runs").iterdir())
+            self.assertEqual(len(run_dirs), 1)
+            run_dir = run_dirs[0]
+            self.assertTrue((run_dir / "checkpoints" / "last.pt").exists())
+            self.assertTrue((run_dir / "checkpoints" / "best.pt").exists())
+            self.assertTrue((run_dir / "resolved_config.yaml").exists())
+            self.assertTrue((run_dir / "training.log").exists())
+
+
 if __name__ == "__main__":
     unittest.main()
+
 

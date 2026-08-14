@@ -29,6 +29,17 @@ uv run python main.py resume runs/20260812-120000-a1b2c3 \
   --set trainer.max_epochs=40
 ```
 
+Generate text from the best checkpoint of a completed text run:
+
+```bash
+uv run python main.py generate runs/20260812-120000-a1b2c3 "To be or not to be" \
+  --max-tokens 80
+```
+
+Generation requires `checkpoints/best.pt` and a text data module with a
+tokenizer. The token limit counts newly generated tokens; the prompt is
+included in the printed output.
+
 The original BDH architecture is registered as `bdh`; the configurable causal
 Transformer reference model is registered as `bdh_transformer`. Custom
 components can register themselves from Python modules listed in the YAML

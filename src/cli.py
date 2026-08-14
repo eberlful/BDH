@@ -8,6 +8,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import torch
+
 from .core.config import dump_config, load_config, load_plugin_modules, validate_config
 from .runtime import build_components, component_signature, create_run_dir, seed_everything, write_run_metadata
 
@@ -27,6 +29,11 @@ def build_parser() -> argparse.ArgumentParser:
     resume = commands.add_parser("resume", help="resume the latest checkpoint in a run directory")
     resume.add_argument("run_dir", type=Path)
     resume.add_argument("--set", dest="overrides", action="append", default=[], metavar="PATH=VALUE")
+
+    generate = commands.add_parser("generate", help="generate text from the best checkpoint in a run directory")
+    generate.add_argument("run_dir", type=Path)
+    generate.add_argument("prompt")
+    generate.add_argument("--max-tokens", type=int, required=True, dest="max_tokens")
     return parser
 
 
@@ -73,6 +80,37 @@ def run_resume(run_dir: Path, overrides: list[str]) -> int:
     return 0
 
 
+def run_generate(run_dir: Path, prompt: str, max_tokens: int) -> int:
+    if max_tokens < 1:
+        raise ValueError("max_tokens must be at least 1.")
+    config_path = run_dir / "config.yaml"
+    if not config_path.exists():
+        raise FileNotFoundError(f"Run directory does not contain {config_path.name}: {run_dir}")
+    checkpoint_path = run_dir / "checkpoints" / "best.pt"
+    if not checkpoint_path.exists():
+        raise FileNotFoundError(f"No best checkpoint found at {checkpoint_path}.")
+
+    config = _validate_and_load(config_path, [])
+    trainer = build_components(config, run_dir)
+    trainer.setup()
+    tokenizer = getattr(trainer.data_module, "tokenizer", None)
+    if tokenizer is None or not callable(getattr(tokenizer, "encode", None)) or not callable(
+        getattr(tokenizer, "decode", None)
+    ):
+        raise ValueError("Generate mode requires a text data module exposing tokenizer.encode/decode.")
+
+    token_ids = tokenizer.encode(prompt, allowed_special={"<|endoftext|>"})
+    if not token_ids:
+        raise ValueError("Prompt must contain at least one token.")
+    input_ids = torch.tensor([token_ids], dtype=torch.long, device=trainer.device)
+    trainer.restore_checkpoint(checkpoint_path)
+    trainer.model.eval()
+    with torch.inference_mode():
+        generated = trainer.model.generate(input_ids, max_new_tokens=max_tokens)
+    print(tokenizer.decode(generated[0].tolist()))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
@@ -82,6 +120,8 @@ def main(argv: list[str] | None = None) -> int:
             return run_validate(args.config, args.overrides)
         if args.command == "resume":
             return run_resume(args.run_dir, args.overrides)
+        if args.command == "generate":
+            return run_generate(args.run_dir, args.prompt, args.max_tokens)
         raise AssertionError(f"Unhandled command: {args.command}")
     except Exception as exc:
         print(f"bdh: error: {exc}", file=sys.stderr)

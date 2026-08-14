@@ -8,6 +8,7 @@ from typing import Any, Mapping
 
 import torch
 from torch import nn
+from torch.nn import functional as F
 
 
 class BaseModel(nn.Module, ABC):
@@ -23,6 +24,45 @@ class BaseModel(nn.Module, ABC):
     def configure_optimizers(self) -> Any:
         """Return an optimizer, or a mapping containing optimizer/scheduler."""
         raise NotImplementedError("Models must implement configure_optimizers().")
+
+    @torch.no_grad()
+    def generate(
+        self,
+        input_ids: torch.Tensor,
+        max_new_tokens: int,
+        temperature: float = 1.0,
+        top_k: int | None = None,
+    ) -> torch.Tensor:
+        """Autoregressively sample tokens from a causal language model."""
+        if input_ids.ndim != 2:
+            raise ValueError("input_ids must have shape [batch, sequence].")
+        if input_ids.size(1) < 1:
+            raise ValueError("input_ids must contain at least one token.")
+        if max_new_tokens < 0:
+            raise ValueError("max_new_tokens must be non-negative.")
+        if temperature <= 0:
+            raise ValueError("temperature must be positive.")
+        context_length = getattr(self, "context_length", None)
+        if context_length is not None and input_ids.size(1) > context_length:
+            raise ValueError(
+                f"Prompt length {input_ids.size(1)} exceeds context_length={context_length}."
+            )
+
+        for _ in range(max_new_tokens):
+            idx_cond = input_ids
+            if context_length is not None:
+                idx_cond = idx_cond[:, -context_length:]
+            logits = self(idx_cond)
+            logits = logits[:, -1, :] / temperature
+            if top_k is not None:
+                if top_k < 1:
+                    raise ValueError("top_k must be positive when provided.")
+                values, _ = torch.topk(logits, min(top_k, logits.size(-1)))
+                logits[logits < values[:, [-1]]] = float("-inf")
+            probs = F.softmax(logits, dim=-1)
+            next_token = torch.multinomial(probs, num_samples=1)
+            input_ids = torch.cat((input_ids, next_token), dim=1)
+        return input_ids
 
     def training_step(self, batch: Any, batch_idx: int) -> Mapping[str, Any] | torch.Tensor:
         """Return a loss tensor or a mapping containing a ``loss`` tensor."""

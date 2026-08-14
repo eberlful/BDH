@@ -1,14 +1,16 @@
 from __future__ import annotations
 
+import io
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 
 import torch
 import yaml
 
 from src.core.config import load_config, validate_config
-from src.cli import run_resume, run_train, run_validate
+from src.cli import build_parser, run_generate, run_resume, run_train, run_validate
 from src.data.data import (
     SUDOKU_END_TOKEN,
     SUDOKU_POSITION_OFFSET,
@@ -51,6 +53,8 @@ class TrainingEnvironmentTests(unittest.TestCase):
         output = model.training_step(batch, 0)
         self.assertEqual(model(batch["input_ids"]).shape, (2, 8, 32))
         self.assertTrue(torch.isfinite(output["loss"]))
+        with self.assertRaisesRegex(ValueError, "exceeds context_length"):
+            model.generate(torch.randint(0, 32, (1, 9)), max_new_tokens=1)
 
     def test_byte_tokenized_data_module(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -254,6 +258,62 @@ class TrainingEnvironmentTests(unittest.TestCase):
             run_dirs = list((root / "runs").iterdir())
             self.assertEqual(len(run_dirs), 1)
             self.assertEqual(run_resume(run_dirs[0], ["trainer.max_epochs=2"]), 0)
+
+    def test_generate_from_best_checkpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            data_path = root / "input.txt"
+            data_path.write_text("abcdefghijklmnopqrstuvwxyz " * 200, encoding="utf-8")
+            run_dir = root / "run"
+            config = {
+                "device": "cpu",
+                "model": {
+                    "name": "bdh_transformer",
+                    "params": {
+                        "vocab_size": "auto",
+                        "context_length": 16,
+                        "d_model": 16,
+                        "n_heads": 4,
+                        "n_layers": 1,
+                    },
+                },
+                "data": {
+                    "name": "tiny_shakespeare",
+                    "params": {
+                        "input_file_path": str(data_path),
+                        "tokenizer": "byte",
+                        "context_length": 16,
+                        "batch_size": 4,
+                    },
+                },
+                "trainer": {"name": "torch", "max_epochs": 1, "max_steps": 1},
+                "callbacks": [{"name": "checkpoint", "params": {"save_best": True}}],
+                "loggers": [],
+            }
+            trainer = build_components(config, run_dir)
+            trainer.fit()
+            config_path = run_dir / "config.yaml"
+            config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
+
+            parsed = build_parser().parse_args(["generate", str(run_dir), "hello", "--max-tokens", "3"])
+            self.assertEqual(parsed.max_tokens, 3)
+            output = io.StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(run_generate(run_dir, "hello", 3), 0)
+            generated_text = output.getvalue().strip()
+            self.assertTrue(generated_text.startswith("hello"))
+            self.assertNotEqual(generated_text, "hello")
+
+    def test_generate_rejects_invalid_inputs(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory) / "run"
+            run_dir.mkdir()
+            (run_dir / "config.yaml").write_text("{}", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "at least 1"):
+                run_generate(run_dir, "hello", 0)
+
+            with self.assertRaisesRegex(FileNotFoundError, "No best checkpoint"):
+                run_generate(run_dir, "hello", 1)
 
 
 if __name__ == "__main__":

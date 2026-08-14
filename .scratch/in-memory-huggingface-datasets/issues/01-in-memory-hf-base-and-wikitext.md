@@ -4,10 +4,10 @@
 
 **Blocked by:** None — can start immediately.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] `HuggingFaceTextDataModule` base class supports `in_memory=True` with `streaming=True` and disabled disk caching (`datasets.disable_caching()`), compiling text streams directly into an in-memory `TokenBlockDataset`.
-- [ ] `HuggingFaceTextDataModule` supports `in_memory=False` for standard disk-cached Arrow storage.
-- [ ] `WikiTextDataModule` registered under `"wikitext"` defaults to `dataset_config="wikitext-2-raw-v1"`, accepts `wikitext-103-raw-v1`, filters whitespace-only lines, and inserts `<|endoftext|>` on document/article boundaries.
-- [ ] Resolves official `split="validation"` from Hugging Face by default, falling back to `validation_fraction` if only a single split is present.
-- [ ] Unit tests verify dataset token block generation, split separation, batching, and zero disk writes when `in_memory=True`.
+- [x] `HuggingFaceTextDataModule` base class supports `in_memory=True` with `streaming=True` and disabled disk caching (`datasets.disable_caching()`), compiling text streams directly into an in-memory `TokenBlockDataset`.
+- [x] `HuggingFaceTextDataModule` supports `in_memory=False` for standard disk-cached Arrow storage.
+- [x] `WikiTextDataModule` registered under `"wikitext"` defaults to `dataset_config="wikitext-2-raw-v1"`, accepts `wikitext-103-raw-v1`, filters whitespace-only lines, and inserts `<|endoftext|>` on document/article boundaries.
+- [x] Resolves official `split="validation"` from Hugging Face by default, falling back to `validation_fraction` if only a single split is present.
+- [x] Unit tests verify dataset token block generation, split separation, batching, and zero disk writes when `in_memory=True`.

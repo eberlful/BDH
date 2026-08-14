@@ -16,13 +16,16 @@ from ..core.registry import DATA_REGISTRY
 
 
 class TokenBlockDataset(Dataset[dict[str, torch.Tensor]]):
-    def __init__(self, token_ids: list[int], context_length: int) -> None:
+    def __init__(self, token_ids: list[int] | torch.Tensor, context_length: int) -> None:
         if len(token_ids) <= context_length:
             raise ValueError(
                 f"The dataset needs more than context_length={context_length} tokens; "
                 f"only {len(token_ids)} were found."
             )
-        values = torch.tensor(token_ids, dtype=torch.long)
+        if isinstance(token_ids, torch.Tensor):
+            values = token_ids.to(dtype=torch.long)
+        else:
+            values = torch.tensor(token_ids, dtype=torch.long)
         self.inputs = values[:-1]
         self.targets = values[1:]
         self.context_length = context_length

@@ -161,7 +161,166 @@ class SudokuCoTTests(unittest.TestCase):
             with redirect_stdout(output):
                 self.assertEqual(run_generate(run_dir, prompt, max_tokens=10), 0)
             self.assertIn("Sudoku:", output.getvalue())
+            self.assertIn("Thinking:\n", output.getvalue())
+
+    def test_small_sudoku_direct_fit_and_generate(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            run_dir = Path(temp_dir) / "run"
+            config = {
+                "seed": 42,
+                "device": "cpu",
+                "runs_dir": str(Path(temp_dir) / "runs"),
+                "model": {
+                    "name": "bdh_transformer",
+                    "params": {
+                        "vocab_size": "auto",
+                        "context_length": 128,
+                        "d_model": 32,
+                        "n_heads": 2,
+                        "n_layers": 1,
+                    },
+                },
+                "data": {
+                    "name": "sudoku_cot",
+                    "params": {
+                        "num_samples": 4,
+                        "validation_fraction": 0.5,
+                        "clues": 60,
+                        "batch_size": 2,
+                        "context_length": 128,
+                        "reasoning_mode": "none",
+                        "tokenizer": "gpt2",
+                    },
+                },
+                "trainer": {
+                    "name": "torch",
+                    "max_epochs": 1,
+                    "log_every_n_steps": 1,
+                    "validate_every_n_epochs": 1,
+                },
+                "callbacks": [{"name": "checkpoint", "params": {"save_best": True}}],
+                "loggers": [],
+            }
+            trainer = build_components(config, run_dir)
+            trainer.fit()
+
+            dump_config(config, run_dir / "config.yaml")
+            prompt = "".join(str(v) for v in self.sample_puzzle)
+            output = io.StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(run_generate(run_dir, prompt, max_tokens=10), 0)
+            self.assertIn("Sudoku:", output.getvalue())
+            self.assertIn("Solution:\n", output.getvalue())
+            self.assertNotIn("Thinking:\n", output.getvalue())
+
+    def test_small_sudoku_context_only_fit_and_generate(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            run_dir = Path(temp_dir) / "run"
+            config = {
+                "seed": 42,
+                "device": "cpu",
+                "runs_dir": str(Path(temp_dir) / "runs"),
+                "model": {
+                    "name": "bdh_transformer",
+                    "params": {
+                        "vocab_size": "auto",
+                        "context_length": 512,
+                        "d_model": 32,
+                        "n_heads": 2,
+                        "n_layers": 1,
+                    },
+                },
+                "data": {
+                    "name": "sudoku_cot",
+                    "params": {
+                        "num_samples": 4,
+                        "validation_fraction": 0.5,
+                        "clues": 70,
+                        "batch_size": 2,
+                        "context_length": 512,
+                        "reasoning_mode": "context_only",
+                        "tokenizer": "gpt2",
+                    },
+                },
+                "trainer": {
+                    "name": "torch",
+                    "max_epochs": 1,
+                    "log_every_n_steps": 1,
+                    "validate_every_n_epochs": 1,
+                },
+                "callbacks": [{"name": "checkpoint", "params": {"save_best": True}}],
+                "loggers": [],
+            }
+            trainer = build_components(config, run_dir)
+            trainer.fit()
+
+            dump_config(config, run_dir / "config.yaml")
+            prompt = "".join(str(v) for v in self.sample_puzzle)
+            output = io.StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(run_generate(run_dir, prompt, max_tokens=10), 0)
+            self.assertIn("Sudoku:", output.getvalue())
+            self.assertIn("Thinking:\n", output.getvalue())
+
+    def test_reasoning_modes_validation(self) -> None:
+        tokenizer = tiktoken.get_encoding("gpt2")
+        samples = [{"puzzle": self.sample_puzzle, "solution": self.sample_solution}]
+
+        with self.assertRaises(ValueError):
+            build_sudoku_cot_prompt(self.sample_puzzle, reasoning_mode="invalid")
+
+        with self.assertRaises(ValueError):
+            build_sudoku_cot_full_text(self.sample_puzzle, self.sample_solution, reasoning_mode="invalid")
+
+        with self.assertRaises(ValueError):
+            SudokuCoTDataset(samples, tokenizer, reasoning_mode="invalid")
+
+        with self.assertRaises(ValueError):
+            SudokuCoTDataModule(num_samples=4, reasoning_mode="invalid")
+
+    def test_reasoning_mode_none(self) -> None:
+        tokenizer = tiktoken.get_encoding("gpt2")
+        prompt_text, full_text = build_sudoku_cot_full_text(
+            self.sample_puzzle, self.sample_solution, reasoning_mode="none"
+        )
+        self.assertIn("Solution:\n", prompt_text)
+        self.assertNotIn("Thinking:\n", prompt_text)
+        self.assertNotIn("- R 1 C", full_text)
+
+        samples = [{"puzzle": self.sample_puzzle, "solution": self.sample_solution}]
+        dataset = SudokuCoTDataset(samples, tokenizer, context_length=256, reasoning_mode="none")
+        item = dataset[0]
+        input_ids = item["input_ids"]
+        target_ids = item["target_ids"]
+
+        prompt_ids = tokenizer.encode(prompt_text)
+        prompt_len = len(prompt_ids)
+        # All prompt transitions in target_ids should be -100
+        for i in range(prompt_len - 1):
+            self.assertEqual(target_ids[i].item(), -100)
+        # First token of solution should be supervised
+        self.assertNotEqual(target_ids[prompt_len - 1].item(), -100)
+
+    def test_reasoning_mode_context_only(self) -> None:
+        tokenizer = tiktoken.get_encoding("gpt2")
+        samples = [{"puzzle": self.sample_puzzle, "solution": self.sample_solution}]
+        dataset = SudokuCoTDataset(samples, tokenizer, context_length=1024, reasoning_mode="context_only")
+        item = dataset[0]
+        target_ids = item["target_ids"]
+
+        prompt_text = build_sudoku_cot_prompt(self.sample_puzzle, reasoning_mode="context_only")
+        cot_steps = generate_cot_steps(self.sample_puzzle, self.sample_solution)
+        context_prefix = f"{prompt_text}{cot_steps}\n\nSolution:\n"
+        context_ids = tokenizer.encode(context_prefix)
+        context_len = len(context_ids)
+
+        # Everything up to Solution:\n should be masked with -100
+        for i in range(context_len - 1):
+            self.assertEqual(target_ids[i].item(), -100)
+        # First token of the solution must not be -100
+        self.assertNotEqual(target_ids[context_len - 1].item(), -100)
 
 
 if __name__ == "__main__":
     unittest.main()
+

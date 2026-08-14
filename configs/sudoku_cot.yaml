@@ -22,6 +22,7 @@ data:
     clues: 30
     batch_size: 16
     context_length: 1024
+    reasoning_mode: full  # Supported: full (CoT + solution), none (direct solution), context_only (masked CoT context)
     tokenizer: gpt2
     num_workers: 0
     shuffle: true

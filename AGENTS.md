@@ -1,5 +1,7 @@
 
+## Local executions
 
+This device has 16GB of unified memory. Before you start a training, think about the necessary memory and whether it fits. It's likely that you need to reduce the model size or the batch size.
 
 ### Code execution
 

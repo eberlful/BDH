@@ -58,7 +58,18 @@ For Sudoku Chain-of-Thought (CoT) runs with GPT-2 tokenization:
 uv run python main.py train configs/sudoku_cot.yaml
 ```
 
-To generate step-by-step reasoning and full solution from a checkpoint:
+Configure the reasoning path via `data.params.reasoning_mode`:
+- `full` (default): Trains on both step-by-step thinking traces and the final solution.
+- `none`: Trains directly on prompt-to-solution mappings without intermediate reasoning steps.
+- `context_only`: Includes reasoning steps in prompt context but masks loss, training only on solution tokens.
+
+```bash
+uv run python main.py train configs/sudoku_cot.yaml \
+  --set data.params.reasoning_mode=none \
+  --set data.params.context_length=256
+```
+
+To generate predictions from a checkpoint (the CLI automatically matches the trained reasoning mode):
 
 ```bash
 uv run python main.py generate runs/20260812-120000-a1b2c3 \

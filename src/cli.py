@@ -105,7 +105,8 @@ def run_generate(run_dir: Path, prompt: str, max_tokens: int) -> int:
                 digits = [int(c) for c in prompt if c.isdigit()]
                 if len(digits) == 81:
                     from .data.sudoku_cot import build_sudoku_cot_prompt
-                    prompt = build_sudoku_cot_prompt(digits)
+                    reasoning_mode = config.get("data", {}).get("params", {}).get("reasoning_mode", "full")
+                    prompt = build_sudoku_cot_prompt(digits, reasoning_mode=reasoning_mode)
             except Exception:
                 pass
         token_ids = tokenizer.encode(prompt, allowed_special={"<|endoftext|>"})

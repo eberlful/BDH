@@ -57,22 +57,42 @@ def generate_cot_steps(puzzle: tuple[int, ...] | list[int], solution: tuple[int,
     return "\n".join(steps)
 
 
-def build_sudoku_cot_prompt(puzzle: tuple[int, ...] | list[int]) -> str:
-    """Build the prompt prefix for Sudoku CoT."""
+ALLOWED_REASONING_MODES = ("full", "none", "context_only")
+
+
+def build_sudoku_cot_prompt(
+    puzzle: tuple[int, ...] | list[int],
+    reasoning_mode: str = "full",
+) -> str:
+    """Build the prompt prefix for Sudoku based on reasoning mode."""
+    if reasoning_mode not in ALLOWED_REASONING_MODES:
+        raise ValueError(
+            f"reasoning_mode must be one of {ALLOWED_REASONING_MODES}, got {reasoning_mode!r}."
+        )
     grid_str = format_sudoku_grid(puzzle)
+    if reasoning_mode == "none":
+        return f"Sudoku:\n{grid_str}\n\nSolution:\n"
     return f"Sudoku:\n{grid_str}\n\nThinking:\n"
 
 
 def build_sudoku_cot_full_text(
     puzzle: tuple[int, ...] | list[int],
     solution: tuple[int, ...] | list[int],
+    reasoning_mode: str = "full",
     eos_token: str = "<|endoftext|>",
 ) -> tuple[str, str]:
-    """Build prompt and full target text for a Sudoku CoT sample."""
-    prompt_text = build_sudoku_cot_prompt(puzzle)
-    cot_steps = generate_cot_steps(puzzle, solution)
+    """Build prompt and full target text for a Sudoku sample under a specific reasoning mode."""
+    if reasoning_mode not in ALLOWED_REASONING_MODES:
+        raise ValueError(
+            f"reasoning_mode must be one of {ALLOWED_REASONING_MODES}, got {reasoning_mode!r}."
+        )
+    prompt_text = build_sudoku_cot_prompt(puzzle, reasoning_mode=reasoning_mode)
     solution_grid = format_sudoku_grid(solution)
-    full_text = f"{prompt_text}{cot_steps}\n\nSolution:\n{solution_grid}\n{eos_token}"
+    if reasoning_mode == "none":
+        full_text = f"{prompt_text}{solution_grid}\n{eos_token}"
+    else:
+        cot_steps = generate_cot_steps(puzzle, solution)
+        full_text = f"{prompt_text}{cot_steps}\n\nSolution:\n{solution_grid}\n{eos_token}"
     return prompt_text, full_text
 
 
@@ -87,46 +107,54 @@ class SudokuCoTSample:
 
 
 class SudokuCoTDataset(Dataset[dict[str, torch.Tensor]]):
-    """PyTorch Dataset for Sudoku Chain-of-Thought with prompt loss masking."""
+    """PyTorch Dataset for Sudoku Chain-of-Thought with configurable reasoning modes and prompt loss masking."""
 
     def __init__(
         self,
         samples: list[dict[str, Any]],
         tokenizer: Any,
         context_length: int = 1024,
+        reasoning_mode: str = "full",
         pad_token_id: int = 50256,  # <|endoftext|> in gpt2
     ) -> None:
         if not samples:
             raise ValueError("SudokuCoTDataset must contain at least one sample.")
+        if reasoning_mode not in ALLOWED_REASONING_MODES:
+            raise ValueError(
+                f"reasoning_mode must be one of {ALLOWED_REASONING_MODES}, got {reasoning_mode!r}."
+            )
         self.samples = samples
         self.tokenizer = tokenizer
         self.context_length = context_length
+        self.reasoning_mode = reasoning_mode
         self.pad_token_id = pad_token_id
 
         self.input_ids_list: list[torch.Tensor] = []
         self.target_ids_list: list[torch.Tensor] = []
         self._encode_all()
 
+    def _encode_text(self, text: str) -> list[int]:
+        if hasattr(self.tokenizer, "encode"):
+            try:
+                return self.tokenizer.encode(text, allowed_special={"<|endoftext|>"})
+            except TypeError:
+                return self.tokenizer.encode(text)
+        raise TypeError("Tokenizer must have an encode method.")
+
     def _encode_all(self) -> None:
         for item in self.samples:
             puzzle = item["puzzle"]
             solution = item["solution"]
-            prompt_text, full_text = build_sudoku_cot_full_text(puzzle, solution)
+            prompt_text, full_text = build_sudoku_cot_full_text(
+                puzzle, solution, reasoning_mode=self.reasoning_mode
+            )
 
-            if hasattr(self.tokenizer, "encode"):
-                try:
-                    prompt_ids = self.tokenizer.encode(prompt_text, allowed_special={"<|endoftext|>"})
-                    full_ids = self.tokenizer.encode(full_text, allowed_special={"<|endoftext|>"})
-                except TypeError:
-                    prompt_ids = self.tokenizer.encode(prompt_text)
-                    full_ids = self.tokenizer.encode(full_text)
-            else:
-                raise TypeError("Tokenizer must have an encode method.")
+            prompt_ids = self._encode_text(prompt_text)
+            full_ids = self._encode_text(full_text)
 
             # Causal LM: input_ids = full_ids[:-1], target_ids = full_ids[1:]
             seq_input = full_ids[:-1]
             seq_target = full_ids[1:]
-            prompt_len = len(prompt_ids)
 
             # Truncate if exceeds context_length
             if len(seq_input) > self.context_length:
@@ -140,9 +168,18 @@ class SudokuCoTDataset(Dataset[dict[str, torch.Tensor]]):
             input_tensor[:curr_len] = torch.tensor(seq_input, dtype=torch.long)
             target_tensor[:curr_len] = torch.tensor(seq_target, dtype=torch.long)
 
-            # Mask out the prompt tokens in target so model is only trained on Thinking + Solution
-            # prompt_len - 1 is the number of transitions within the prompt prefix
-            mask_len = min(max(0, prompt_len - 1), curr_len)
+            # Determine loss masking boundary based on reasoning_mode:
+            # - 'full': mask prompt prefix transitions (prompt_len - 1)
+            # - 'none': mask prompt prefix transitions (prompt_len - 1)
+            # - 'context_only': mask prompt and CoT steps up to '\n\nSolution:\n'
+            if self.reasoning_mode == "context_only":
+                cot_steps = generate_cot_steps(puzzle, solution)
+                context_prefix = f"{prompt_text}{cot_steps}\n\nSolution:\n"
+                context_ids = self._encode_text(context_prefix)
+                mask_len = min(max(0, len(context_ids) - 1), curr_len)
+            else:
+                mask_len = min(max(0, len(prompt_ids) - 1), curr_len)
+
             target_tensor[:mask_len] = -100
 
             self.input_ids_list.append(input_tensor)
@@ -183,7 +220,7 @@ def _generate_sudoku_cot_raw_samples(
 
 @DATA_REGISTRY.register("sudoku_cot")
 class SudokuCoTDataModule(BaseDataModule):
-    """Generate Sudoku puzzles with Chain-of-Thought (CoT) reasoning traces tokenized with GPT-2."""
+    """Generate Sudoku puzzles with configurable reasoning modes tokenized with GPT-2."""
 
     def __init__(
         self,
@@ -192,6 +229,7 @@ class SudokuCoTDataModule(BaseDataModule):
         clues: int = 30,
         batch_size: int = 16,
         context_length: int = 1024,
+        reasoning_mode: str = "full",
         tokenizer: str = "gpt2",
         num_workers: int = 0,
         seed: int = 42,
@@ -203,12 +241,17 @@ class SudokuCoTDataModule(BaseDataModule):
             raise ValueError("validation_fraction must be between 0 and 1.")
         if not 0 <= clues <= SUDOKU_CELL_COUNT:
             raise ValueError(f"clues must be between 0 and {SUDOKU_CELL_COUNT}.")
+        if reasoning_mode not in ALLOWED_REASONING_MODES:
+            raise ValueError(
+                f"reasoning_mode must be one of {ALLOWED_REASONING_MODES}, got {reasoning_mode!r}."
+            )
 
         self.num_samples = num_samples
         self.validation_fraction = validation_fraction
         self.clues = clues
         self.batch_size = batch_size
         self.context_length = context_length
+        self.reasoning_mode = reasoning_mode
         self.tokenizer_name = tokenizer
         self.num_workers = num_workers
         self.seed = seed
@@ -237,11 +280,13 @@ class SudokuCoTDataModule(BaseDataModule):
             train_samples,
             self.tokenizer,
             context_length=self.context_length,
+            reasoning_mode=self.reasoning_mode,
         )
         self.val_dataset = SudokuCoTDataset(
             val_samples,
             self.tokenizer,
             context_length=self.context_length,
+            reasoning_mode=self.reasoning_mode,
         )
 
     def train_dataloader(self) -> DataLoader[dict[str, torch.Tensor]]:

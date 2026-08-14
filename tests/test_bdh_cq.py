@@ -156,6 +156,113 @@ class TestBDHCQArchitecture(unittest.TestCase):
         generated = model.generate(prompt, max_new_tokens=4, temperature=1.0)
         self.assertEqual(generated.shape, (1, 8))
 
+    def test_contextual_memory_shape_and_constant_footprint(self):
+        config = BDHCQConfig(
+            n_layer=3,
+            n_embd=64,
+            n_head=2,
+            mlp_internal_dim_multiplier=16,
+            vocab_size=32,
+            dropout=0.0,
+        )
+        model = BDHCQ(config)
+        nh, D = config.n_head, config.n_embd
+        N = config.mlp_internal_dim_multiplier * D // nh
+
+        # Short demonstrations
+        demo_short = torch.randint(0, 32, (2, 4))
+        mem_short = model.encode_contextual_memory(demo_short)
+        self.assertEqual(len(mem_short), 3)
+        for rho in mem_short:
+            self.assertEqual(rho.shape, (2, nh, N, D))
+
+        # Long demonstrations
+        demo_long = torch.randint(0, 32, (2, 48))
+        mem_long = model.encode_contextual_memory(demo_long)
+        self.assertEqual(len(mem_long), 3)
+        for rho in mem_long:
+            self.assertEqual(rho.shape, (2, nh, N, D))
+
+    def test_contextual_memory_alters_downstream_readout(self):
+        config = BDHCQConfig(
+            n_layer=2,
+            n_embd=64,
+            n_head=2,
+            mlp_internal_dim_multiplier=16,
+            vocab_size=32,
+            dropout=0.0,
+        )
+        model = BDHCQ(config)
+
+        torch.manual_seed(42)
+        demo_a = torch.randint(0, 32, (1, 8))
+        demo_b = torch.randint(0, 32, (1, 8))
+        query = torch.randint(0, 32, (1, 4))
+
+        seq_a = torch.cat([demo_a, query], dim=1)
+        seq_b = torch.cat([demo_b, query], dim=1)
+
+        logits_a, _ = model(seq_a, demo_len=8)
+        logits_b, _ = model(seq_b, demo_len=8)
+
+        # Query logits should differ because demonstrations differ
+        query_logits_a = logits_a[:, 8:, :]
+        query_logits_b = logits_b[:, 8:, :]
+        self.assertFalse(torch.allclose(query_logits_a, query_logits_b, atol=1e-4))
+
+    def test_contextual_memory_precomputed_equivalence(self):
+        config = BDHCQConfig(
+            n_layer=2,
+            n_embd=64,
+            n_head=2,
+            mlp_internal_dim_multiplier=16,
+            vocab_size=32,
+            dropout=0.0,
+        )
+        model = BDHCQ(config)
+        model.eval()
+
+        demo = torch.randint(0, 32, (1, 6))
+        query = torch.randint(0, 32, (1, 4))
+        seq = torch.cat([demo, query], dim=1)
+
+        # Forward with demo_len
+        logits_full, _ = model(seq, demo_len=6)
+        query_logits_full = logits_full[:, 6:, :]
+
+        # Forward with precomputed contextual memory
+        mem = model.encode_contextual_memory(demo)
+        logits_query, _ = model(query, contextual_memory=mem)
+
+        self.assertTrue(torch.allclose(query_logits_full, logits_query, atol=1e-5))
+
+    def test_gradient_flow_through_contextual_memory(self):
+        config = BDHCQConfig(
+            n_layer=2,
+            n_embd=64,
+            n_head=2,
+            mlp_internal_dim_multiplier=16,
+            vocab_size=32,
+            dropout=0.0,
+        )
+        model = BDHCQ(config)
+
+        seq = torch.randint(0, 32, (2, 10))
+        targets = torch.randint(0, 32, (2, 10))
+
+        logits, loss = model(seq, targets=targets, demo_len=6)
+        loss.backward()
+
+        self.assertIsNotNone(model.encoder.grad)
+        self.assertIsNotNone(model.encoder_v.grad)
+        self.assertIsNotNone(model.decoder.grad)
+        self.assertIsNotNone(model.embed.weight.grad)
+        self.assertIsNotNone(model.lm_head.grad)
+        self.assertTrue(torch.count_nonzero(model.encoder.grad) > 0)
+        self.assertTrue(torch.count_nonzero(model.encoder_v.grad) > 0)
+        self.assertTrue(torch.count_nonzero(model.decoder.grad) > 0)
+
 
 if __name__ == "__main__":
     unittest.main()
+

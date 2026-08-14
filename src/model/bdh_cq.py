@@ -113,11 +113,41 @@ class BDHCQ(nn.Module):
         elif isinstance(module, nn.Embedding):
             nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
+    def encode_contextual_memory(self, demo_idx: torch.Tensor) -> list[torch.Tensor]:
+        """Sequentially ingest demonstration tokens and return per-layer fast-weights rho_{K, l}."""
+        B, T_demo = demo_idx.size()
+        nh = self.config.n_head
+        x_demo = self.embed(demo_idx).unsqueeze(1)
+        x_demo = self.ln(x_demo)
+
+        memories: list[torch.Tensor] = []
+        for level in range(self.config.n_layer):
+            x_demo_latent = x_demo @ self.encoder
+            x_demo_sparse = F.relu(x_demo_latent)
+            rho_l = x_demo_sparse.transpose(2, 3) @ x_demo.expand(-1, nh, -1, -1)
+            memories.append(rho_l)
+
+            yKV = self.attn(Q=x_demo_sparse, K=x_demo_sparse, V=x_demo)
+            yKV = self.ln(yKV)
+            y_demo_latent = yKV @ self.encoder_v
+            y_demo_sparse = F.relu(y_demo_latent)
+            xy_demo_sparse = self.drop(x_demo_sparse * y_demo_sparse)
+            yMLP = (
+                xy_demo_sparse.transpose(1, 2).reshape(B, 1, T_demo, -1) @ self.decoder
+            )
+            y_demo = self.ln(yMLP)
+            x_demo = self.ln(x_demo + y_demo)
+
+        return memories
+
     def forward(
         self,
         idx: torch.Tensor,
         targets: torch.Tensor | None = None,
-    ) -> tuple[torch.Tensor, torch.Tensor | None]:
+        demo_len: int = 0,
+        contextual_memory: list[torch.Tensor] | None = None,
+        return_contextual_memory: bool = False,
+    ) -> tuple[torch.Tensor, torch.Tensor | None] | tuple[torch.Tensor, torch.Tensor | None, list[torch.Tensor]]:
         C = self.config
 
         B, T = idx.size()
@@ -128,34 +158,116 @@ class BDHCQ(nn.Module):
         x = self.embed(idx).unsqueeze(1)
         x = self.ln(x)  # B, 1, T, D
 
-        for level in range(C.n_layer):
-            x_latent = x @ self.encoder
-            x_sparse = F.relu(x_latent)  # B, nh, T, N
+        accumulated_memory: list[torch.Tensor] = []
 
-            yKV = self.attn(
-                Q=x_sparse,
-                K=x_sparse,
-                V=x,
-            )
-            yKV = self.ln(yKV)
+        if contextual_memory is not None:
+            # Query-only sequence evaluated against precomputed contextual memory
+            for level in range(C.n_layer):
+                rho_l = contextual_memory[level]
+                x_latent = x @ self.encoder
+                x_sparse = F.relu(x_latent)  # B, nh, T, N
 
-            y_latent = yKV @ self.encoder_v
-            y_sparse = F.relu(y_latent)
-            xy_sparse = x_sparse * y_sparse  # B, nh, T, N
+                a_self = self.attn(Q=x_sparse, K=x_sparse, V=x)
+                a_mem = x_sparse @ rho_l  # B, nh, T, D
+                yKV = self.ln(a_self + a_mem)
 
-            xy_sparse = self.drop(xy_sparse)
+                y_latent = yKV @ self.encoder_v
+                y_sparse = F.relu(y_latent)
+                xy_sparse = self.drop(x_sparse * y_sparse)
 
-            yMLP = (
-                xy_sparse.transpose(1, 2).reshape(B, 1, T, N * nh) @ self.decoder
-            )  # B, 1, T, D
-            y = self.ln(yMLP)
-            x = self.ln(x + y)
+                yMLP = (
+                    xy_sparse.transpose(1, 2).reshape(B, 1, T, N * nh) @ self.decoder
+                )
+                y = self.ln(yMLP)
+                x = self.ln(x + y)
+
+        elif demo_len > 0:
+            # Unified sequence with demonstrations followed by query tokens
+            T_demo = demo_len
+            T_query = T - T_demo
+
+            x_demo = x[:, :, :T_demo, :]
+            x_query = x[:, :, T_demo:, :]
+
+            for level in range(C.n_layer):
+                x_demo_latent = x_demo @ self.encoder
+                x_demo_sparse = F.relu(x_demo_latent)  # B, nh, T_demo, N
+
+                # Accumulate fast-weights rho_{K, l}
+                rho_l = x_demo_sparse.transpose(2, 3) @ x_demo.expand(-1, nh, -1, -1)
+                accumulated_memory.append(rho_l)
+
+                # Demo attention
+                yKV_demo = self.attn(Q=x_demo_sparse, K=x_demo_sparse, V=x_demo)
+                yKV_demo = self.ln(yKV_demo)
+                y_demo_latent = yKV_demo @ self.encoder_v
+                y_demo_sparse = F.relu(y_demo_latent)
+                xy_demo_sparse = self.drop(x_demo_sparse * y_demo_sparse)
+                yMLP_demo = (
+                    xy_demo_sparse.transpose(1, 2).reshape(B, 1, T_demo, N * nh)
+                    @ self.decoder
+                )
+                y_demo = self.ln(yMLP_demo)
+                x_demo = self.ln(x_demo + y_demo)
+
+                # Query hybrid attention
+                if T_query > 0:
+                    x_query_latent = x_query @ self.encoder
+                    x_query_sparse = F.relu(x_query_latent)  # B, nh, T_query, N
+
+                    a_self_query = self.attn(
+                        Q=x_query_sparse, K=x_query_sparse, V=x_query
+                    )
+                    a_mem_query = x_query_sparse @ rho_l  # B, nh, T_query, D
+                    yKV_query = self.ln(a_self_query + a_mem_query)
+
+                    y_query_latent = yKV_query @ self.encoder_v
+                    y_query_sparse = F.relu(y_query_latent)
+                    xy_query_sparse = self.drop(x_query_sparse * y_query_sparse)
+                    yMLP_query = (
+                        xy_query_sparse.transpose(1, 2).reshape(B, 1, T_query, N * nh)
+                        @ self.decoder
+                    )
+                    y_query = self.ln(yMLP_query)
+                    x_query = self.ln(x_query + y_query)
+
+            if T_query > 0:
+                x = torch.cat([x_demo, x_query], dim=2)
+            else:
+                x = x_demo
+
+        else:
+            # Baseline execution without demonstrations
+            for level in range(C.n_layer):
+                x_latent = x @ self.encoder
+                x_sparse = F.relu(x_latent)  # B, nh, T, N
+
+                yKV = self.attn(
+                    Q=x_sparse,
+                    K=x_sparse,
+                    V=x,
+                )
+                yKV = self.ln(yKV)
+
+                y_latent = yKV @ self.encoder_v
+                y_sparse = F.relu(y_latent)
+                xy_sparse = x_sparse * y_sparse  # B, nh, T, N
+
+                xy_sparse = self.drop(xy_sparse)
+
+                yMLP = (
+                    xy_sparse.transpose(1, 2).reshape(B, 1, T, N * nh) @ self.decoder
+                )  # B, 1, T, D
+                y = self.ln(yMLP)
+                x = self.ln(x + y)
 
         logits = x.view(B, T, D) @ self.lm_head
         loss = None
         if targets is not None:
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
 
+        if return_contextual_memory:
+            return logits, loss, accumulated_memory
         return logits, loss
 
     @torch.no_grad()
@@ -165,10 +277,16 @@ class BDHCQ(nn.Module):
         max_new_tokens: int,
         temperature: float = 1.0,
         top_k: int | None = None,
+        demo_len: int = 0,
+        contextual_memory: list[torch.Tensor] | None = None,
     ) -> torch.Tensor:
+        if contextual_memory is None and demo_len > 0:
+            contextual_memory = self.encode_contextual_memory(idx[:, :demo_len])
+            idx = idx[:, demo_len:]
+
         for _ in range(max_new_tokens):
             idx_cond = idx
-            logits, _ = self(idx_cond)
+            logits, _ = self(idx_cond, contextual_memory=contextual_memory)
             logits = logits[:, -1, :] / temperature
             if top_k is not None:
                 values, _ = torch.topk(logits, min(top_k, logits.size(-1)))
@@ -236,20 +354,28 @@ class ConfiguredBDHCQ(BaseModel):
         )
         self.network = BDHCQ(self.config)
 
-    def forward(self, input_ids: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        input_ids: torch.Tensor,
+        demo_len: int = 0,
+        contextual_memory: list[torch.Tensor] | None = None,
+    ) -> torch.Tensor:
         if input_ids.ndim != 2:
             raise ValueError("input_ids must have shape [batch, sequence].")
         if input_ids.size(1) > self.context_length:
             raise ValueError(
                 f"Sequence length {input_ids.size(1)} exceeds context_length={self.context_length}."
             )
-        logits, _ = self.network(input_ids)
+        logits, _ = self.network(
+            input_ids, demo_len=demo_len, contextual_memory=contextual_memory
+        )
         return logits
 
     def training_step(
-        self, batch: Mapping[str, torch.Tensor], batch_idx: int
+        self, batch: Mapping[str, torch.Tensor | int], batch_idx: int
     ) -> Mapping[str, torch.Tensor]:
-        logits = self(batch["input_ids"])
+        demo_len = int(batch.get("demo_len", 0))
+        logits = self(batch["input_ids"], demo_len=demo_len)
         return {
             "loss": F.cross_entropy(
                 logits.reshape(-1, logits.size(-1)), batch["target_ids"].reshape(-1)
@@ -257,9 +383,10 @@ class ConfiguredBDHCQ(BaseModel):
         }
 
     def validation_step(
-        self, batch: Mapping[str, torch.Tensor], batch_idx: int
+        self, batch: Mapping[str, torch.Tensor | int], batch_idx: int
     ) -> Mapping[str, torch.Tensor]:
-        logits = self(batch["input_ids"])
+        demo_len = int(batch.get("demo_len", 0))
+        logits = self(batch["input_ids"], demo_len=demo_len)
         return {
             "loss": F.cross_entropy(
                 logits.reshape(-1, logits.size(-1)), batch["target_ids"].reshape(-1)

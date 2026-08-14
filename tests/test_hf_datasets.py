@@ -9,7 +9,12 @@ import torch
 
 from src.core.registry import DATA_REGISTRY, load_builtin_components
 from src.data.data import TokenBlockDataset
-from src.data.hf import HuggingFaceTextDataModule, WikiTextDataModule, _resolve_dataset_name
+from src.data.hf import (
+    HuggingFaceTextDataModule,
+    TinyStoriesDataModule,
+    WikiTextDataModule,
+    _resolve_dataset_name,
+)
 from src.model.bdh import BDHTransformer
 
 
@@ -17,9 +22,10 @@ class HuggingFaceDataModuleTests(unittest.TestCase):
     def setUp(self) -> None:
         load_builtin_components()
 
-    def test_registry_contains_hf_text_and_wikitext(self) -> None:
+    def test_registry_contains_hf_text_and_wikitext_and_tiny_stories(self) -> None:
         self.assertIn("hf_text", DATA_REGISTRY.names())
         self.assertIn("wikitext", DATA_REGISTRY.names())
+        self.assertIn("tiny_stories", DATA_REGISTRY.names())
 
     def test_resolve_dataset_name(self) -> None:
         self.assertEqual(_resolve_dataset_name("wikitext"), "Salesforce/wikitext")
@@ -207,6 +213,90 @@ class HuggingFaceDataModuleTests(unittest.TestCase):
         self.assertEqual(instance.dataset_config, "wikitext-2-raw-v1")
         self.assertEqual(instance.context_length, 32)
 
+    def test_tinystories_defaults_and_story_boundaries(self) -> None:
+        story_stream = [
+            {"text": "Once upon a time, there was a little dog named Spot."},
+            {"text": "Spot liked to run and play in the green grass with his ball."},
+            {"text": "One sunny morning, Spot found a shiny golden bone."},
+            {"text": "Spot took the shiny bone home to show his best friend Lily."},
+        ]
+
+        def fake_load_dataset(name, *args, **kwargs):
+            self.assertEqual(name, "roneneldan/TinyStories")
+            split = kwargs.get("split", "train")
+            if split == "train":
+                return iter(story_stream)
+            if split == "validation":
+                return iter(story_stream)
+            raise ValueError(f"Unknown split {split}")
+
+        with patch("datasets.load_dataset", side_effect=fake_load_dataset):
+            module = TinyStoriesDataModule(
+                tokenizer="byte",
+                context_length=16,
+                batch_size=2,
+                max_train_samples=3,
+                max_val_samples=2,
+                in_memory=True,
+            )
+            self.assertEqual(module.dataset_name, "roneneldan/TinyStories")
+            self.assertEqual(module.max_train_samples, 3)
+            self.assertEqual(module.max_val_samples, 2)
+
+            module.setup("fit")
+            self.assertIsNotNone(module.train_dataset)
+
+            # In byte tokenizer, eos_token is 256 (<|endoftext|>)
+            token_tensor = module.train_dataset.inputs
+            eos_count = int((token_tensor == 256).sum().item())
+            self.assertGreaterEqual(eos_count, 1)
+
+    def test_tinystories_instantiation_via_registry(self) -> None:
+        instance = DATA_REGISTRY.instantiate(
+            {
+                "name": "tiny_stories",
+                "params": {
+                    "tokenizer": "byte",
+                    "context_length": 32,
+                    "batch_size": 4,
+                    "max_train_samples": 500,
+                },
+            }
+        )
+        self.assertIsInstance(instance, TinyStoriesDataModule)
+        self.assertEqual(instance.dataset_name, "roneneldan/TinyStories")
+        self.assertEqual(instance.max_train_samples, 500)
+        self.assertEqual(instance.max_val_samples, 10_000)
+
+    def test_tinystories_end_to_end_training_step(self) -> None:
+        story_stream = [
+            {"text": f"Story number {i} about a cheerful bird singing songs in a sunny park."}
+            for i in range(15)
+        ]
+
+        def fake_load_dataset(name, *args, **kwargs):
+            return iter(story_stream)
+
+        with patch("datasets.load_dataset", side_effect=fake_load_dataset):
+            module = TinyStoriesDataModule(
+                tokenizer="byte",
+                context_length=16,
+                batch_size=2,
+                in_memory=True,
+            )
+            module.setup("fit")
+            model = BDHTransformer(
+                vocab_size=module.vocab_size,
+                context_length=module.context_length,
+                d_model=16,
+                n_heads=4,
+                n_layers=1,
+            )
+            batch = next(iter(module.train_dataloader()))
+            step_output = model.training_step(batch, 0)
+            self.assertIn("loss", step_output)
+            self.assertTrue(torch.isfinite(step_output["loss"]))
+
     def test_end_to_end_training_step_with_model(self) -> None:
         mock_data = [{"text": f" = Article {i} = \nDetailed text content for article {i}.\n"} for i in range(15)]
 
@@ -236,3 +326,4 @@ class HuggingFaceDataModuleTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

@@ -274,3 +274,45 @@ class WikiTextDataModule(HuggingFaceTextDataModule):
             token_ids.append(self.eos_token_id)
 
         return token_ids
+
+
+@DATA_REGISTRY.register("tiny_stories")
+class TinyStoriesDataModule(HuggingFaceTextDataModule):
+    """TinyStories synthetic narrative reasoning dataset with zero-disk streaming and memory limits."""
+
+    def __init__(
+        self,
+        tokenizer: str = "gpt2",
+        context_length: int = 256,
+        batch_size: int = 32,
+        validation_fraction: float = 0.1,
+        train_split: str = "train",
+        val_split: str | None = "validation",
+        max_train_samples: int | None = 100_000,
+        max_val_samples: int | None = 10_000,
+        in_memory: bool = True,
+        num_workers: int = 0,
+        seed: int = 42,
+        shuffle: bool = True,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(
+            dataset_name="roneneldan/TinyStories",
+            dataset_config=None,
+            tokenizer=tokenizer,
+            context_length=context_length,
+            batch_size=batch_size,
+            validation_fraction=validation_fraction,
+            train_split=train_split,
+            val_split=val_split,
+            max_train_samples=max_train_samples,
+            max_val_samples=max_val_samples,
+            in_memory=in_memory,
+            text_column="text",
+            num_workers=num_workers,
+            seed=seed,
+            shuffle=shuffle,
+            add_eos_token=True,
+            **kwargs,
+        )
+

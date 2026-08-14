@@ -4,10 +4,10 @@
 
 **Blocked by:** 01 — In-Memory Hugging Face Base DataModule and WikiText Integration
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] `TinyStoriesDataModule` registered under `"tiny_stories"` targets `dataset_name="roneneldan/TinyStories"`.
-- [ ] Enforces configurable `max_train_samples` (default `100_000`) and `max_val_samples` (default `10_000`) to guarantee memory safety on 16GB unified memory, while supporting `None` for full load.
-- [ ] Delimits distinct stories with `<|endoftext|>` tokens before packing into contiguous context blocks.
-- [ ] Supports both `in_memory=True` (streaming RAM ingestion) and `in_memory=False` (disk caching).
-- [ ] Unit tests verify sample limit truncation, boundary token delimiter insertion, and dataloader batch outputs.
+- [x] `TinyStoriesDataModule` registered under `"tiny_stories"` targets `dataset_name="roneneldan/TinyStories"`.
+- [x] Enforces configurable `max_train_samples` (default `100_000`) and `max_val_samples` (default `10_000`) to guarantee memory safety on 16GB unified memory, while supporting `None` for full load.
+- [x] Delimits distinct stories with `<|endoftext|>` tokens before packing into contiguous context blocks.
+- [x] Supports both `in_memory=True` (streaming RAM ingestion) and `in_memory=False` (disk caching).
+- [x] Unit tests verify sample limit truncation, boundary token delimiter insertion, and dataloader batch outputs.

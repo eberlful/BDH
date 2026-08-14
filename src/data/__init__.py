@@ -1,7 +1,7 @@
 """Data modules."""
 
 from .data import SudokuDataModule, TinyShakespeareDataModule, TokenBlockDataset
-from .hf import HuggingFaceTextDataModule, WikiTextDataModule
+from .hf import HuggingFaceTextDataModule, TinyStoriesDataModule, WikiTextDataModule
 from .sudoku_cot import (
     SudokuCoTDataModule,
     SudokuCoTDataset,
@@ -18,6 +18,7 @@ __all__ = [
     "SudokuCoTDataModule",
     "SudokuCoTDataset",
     "TinyShakespeareDataModule",
+    "TinyStoriesDataModule",
     "TokenBlockDataset",
     "WikiTextDataModule",
     "build_sudoku_cot_prompt",

@@ -263,6 +263,165 @@ class TestBDHCQArchitecture(unittest.TestCase):
         self.assertTrue(torch.count_nonzero(model.decoder.grad) > 0)
 
 
+    def test_dynamic_reasoning_steps_override(self):
+        config = BDHCQConfig(
+            n_layer=2,
+            n_embd=64,
+            n_head=2,
+            mlp_internal_dim_multiplier=16,
+            vocab_size=32,
+            dropout=0.0,
+            latent_reasoning_steps=1,
+        )
+        model = BDHCQ(config)
+        model.eval()
+
+        input_ids = torch.randint(0, 32, (1, 8))
+
+        # Test default R=1
+        logits_r1, _ = model(input_ids)
+
+        # Dynamically evaluate with R=3
+        logits_r3, _ = model(input_ids, latent_reasoning_steps=3)
+
+        self.assertEqual(logits_r1.shape, (1, 8, 32))
+        self.assertEqual(logits_r3.shape, (1, 8, 32))
+        # R=3 applies additional recurrent passes so output should differ from R=1
+        self.assertFalse(torch.allclose(logits_r1, logits_r3, atol=1e-4))
+
+        # Invalid R raises ValueError
+        with self.assertRaises(ValueError):
+            model(input_ids, latent_reasoning_steps=0)
+
+    def test_iterative_latent_refinement_and_intermediate_logits(self):
+        config = BDHCQConfig(
+            n_layer=2,
+            n_embd=64,
+            n_head=2,
+            mlp_internal_dim_multiplier=16,
+            vocab_size=32,
+            dropout=0.0,
+            latent_reasoning_steps=3,
+        )
+        model = BDHCQ(config)
+        model.eval()
+
+        demo = torch.randint(0, 32, (1, 6))
+        query = torch.randint(0, 32, (1, 4))
+        seq = torch.cat([demo, query], dim=1)
+
+        # Forward returning intermediate logits across R=3 passes
+        logits, _, intermediate_logits = model(
+            seq, demo_len=6, return_intermediate_logits=True
+        )
+
+        self.assertEqual(len(intermediate_logits), 3)
+        for r_step, step_logits in enumerate(intermediate_logits):
+            self.assertEqual(step_logits.shape, (1, 10, 32))
+
+        # The final step logits should match the primary return logits
+        self.assertTrue(torch.allclose(logits, intermediate_logits[-1], atol=1e-5))
+
+        # Successive passes refine query representation, so intermediate query logits should differ
+        query_step0 = intermediate_logits[0][:, 6:, :]
+        query_step1 = intermediate_logits[1][:, 6:, :]
+        query_step2 = intermediate_logits[2][:, 6:, :]
+
+        self.assertFalse(torch.allclose(query_step0, query_step1, atol=1e-4))
+        self.assertFalse(torch.allclose(query_step1, query_step2, atol=1e-4))
+
+        # Demonstration logits are computed during ingestion and remain stable
+        demo_step0 = intermediate_logits[0][:, :6, :]
+        demo_step1 = intermediate_logits[1][:, :6, :]
+        self.assertTrue(torch.allclose(demo_step0, demo_step1, atol=1e-5))
+
+    def test_hybrid_attention_with_precomputed_memory_and_recurrent_steps(self):
+        config = BDHCQConfig(
+            n_layer=2,
+            n_embd=64,
+            n_head=2,
+            mlp_internal_dim_multiplier=16,
+            vocab_size=32,
+            dropout=0.0,
+            latent_reasoning_steps=2,
+        )
+        model = BDHCQ(config)
+        model.eval()
+
+        demo = torch.randint(0, 32, (1, 6))
+        query = torch.randint(0, 32, (1, 4))
+        seq = torch.cat([demo, query], dim=1)
+
+        # Full sequence forward
+        logits_full, _ = model(seq, demo_len=6, latent_reasoning_steps=2)
+        query_logits_full = logits_full[:, 6:, :]
+
+        # Precomputed memory forward with same R
+        mem = model.encode_contextual_memory(demo)
+        query_logits_mem, _ = model(
+            query, contextual_memory=mem, latent_reasoning_steps=2
+        )
+
+        self.assertTrue(
+            torch.allclose(query_logits_full, query_logits_mem, atol=1e-5)
+        )
+
+    def test_gradient_flow_through_multiple_recurrent_reasoning_steps(self):
+        config = BDHCQConfig(
+            n_layer=2,
+            n_embd=64,
+            n_head=2,
+            mlp_internal_dim_multiplier=16,
+            vocab_size=32,
+            dropout=0.0,
+            latent_reasoning_steps=3,
+        )
+        model = BDHCQ(config)
+
+        seq = torch.randint(0, 32, (2, 8))
+        targets = torch.randint(0, 32, (2, 8))
+
+        logits, loss = model(
+            seq, targets=targets, demo_len=4, latent_reasoning_steps=3
+        )
+        loss.backward()
+
+        self.assertIsNotNone(model.encoder.grad)
+        self.assertIsNotNone(model.encoder_v.grad)
+        self.assertIsNotNone(model.decoder.grad)
+        self.assertIsNotNone(model.embed.weight.grad)
+        self.assertIsNotNone(model.lm_head.grad)
+        self.assertTrue(torch.count_nonzero(model.encoder.grad) > 0)
+        self.assertTrue(torch.count_nonzero(model.encoder_v.grad) > 0)
+        self.assertTrue(torch.count_nonzero(model.decoder.grad) > 0)
+
+    def test_autoregressive_generation_with_recurrent_latent_reasoning(self):
+        model = ConfiguredBDHCQ(
+            vocab_size=32,
+            context_length=32,
+            n_layer=2,
+            n_embd=64,
+            n_head=2,
+            mlp_internal_dim_multiplier=16,
+            latent_reasoning_steps=2,
+        )
+
+        # Generation without demonstrations but with R=2
+        prompt = torch.randint(0, 32, (1, 4))
+        generated_r2 = model.generate(
+            prompt, max_new_tokens=4, latent_reasoning_steps=2
+        )
+        self.assertEqual(generated_r2.shape, (1, 8))
+
+        # Generation with demonstrations and R=3
+        demo_and_query = torch.randint(0, 32, (1, 8))  # 5 demo + 3 query
+        generated_demo = model.generate(
+            demo_and_query, max_new_tokens=4, demo_len=5, latent_reasoning_steps=3
+        )
+        self.assertEqual(generated_demo.shape, (1, 12))
+
+
 if __name__ == "__main__":
     unittest.main()
+
 

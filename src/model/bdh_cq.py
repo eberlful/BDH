@@ -146,9 +146,23 @@ class BDHCQ(nn.Module):
         targets: torch.Tensor | None = None,
         demo_len: int = 0,
         contextual_memory: list[torch.Tensor] | None = None,
+        latent_reasoning_steps: int | None = None,
         return_contextual_memory: bool = False,
-    ) -> tuple[torch.Tensor, torch.Tensor | None] | tuple[torch.Tensor, torch.Tensor | None, list[torch.Tensor]]:
+        return_intermediate_logits: bool = False,
+    ) -> (
+        tuple[torch.Tensor, torch.Tensor | None]
+        | tuple[torch.Tensor, torch.Tensor | None, list[torch.Tensor]]
+        | tuple[torch.Tensor, torch.Tensor | None, list[torch.Tensor], list[torch.Tensor]]
+    ):
         C = self.config
+
+        R = (
+            latent_reasoning_steps
+            if latent_reasoning_steps is not None
+            else C.latent_reasoning_steps
+        )
+        if R < 1:
+            raise ValueError("latent_reasoning_steps must be at least 1.")
 
         B, T = idx.size()
         D = C.n_embd
@@ -159,27 +173,36 @@ class BDHCQ(nn.Module):
         x = self.ln(x)  # B, 1, T, D
 
         accumulated_memory: list[torch.Tensor] = []
+        intermediate_logits: list[torch.Tensor] = []
 
         if contextual_memory is not None:
             # Query-only sequence evaluated against precomputed contextual memory
-            for level in range(C.n_layer):
-                rho_l = contextual_memory[level]
-                x_latent = x @ self.encoder
-                x_sparse = F.relu(x_latent)  # B, nh, T, N
+            h = x
+            for r in range(R):
+                for level in range(C.n_layer):
+                    rho_l = contextual_memory[level]
+                    x_latent = h @ self.encoder
+                    x_sparse = F.relu(x_latent)  # B, nh, T, N
 
-                a_self = self.attn(Q=x_sparse, K=x_sparse, V=x)
-                a_mem = x_sparse @ rho_l  # B, nh, T, D
-                yKV = self.ln(a_self + a_mem)
+                    a_self = self.attn(Q=x_sparse, K=x_sparse, V=h)
+                    a_mem = x_sparse @ rho_l  # B, nh, T, D
+                    yKV = self.ln(a_self + a_mem)
 
-                y_latent = yKV @ self.encoder_v
-                y_sparse = F.relu(y_latent)
-                xy_sparse = self.drop(x_sparse * y_sparse)
+                    y_latent = yKV @ self.encoder_v
+                    y_sparse = F.relu(y_latent)
+                    xy_sparse = self.drop(x_sparse * y_sparse)
 
-                yMLP = (
-                    xy_sparse.transpose(1, 2).reshape(B, 1, T, N * nh) @ self.decoder
-                )
-                y = self.ln(yMLP)
-                x = self.ln(x + y)
+                    yMLP = (
+                        xy_sparse.transpose(1, 2).reshape(B, 1, T, N * nh) @ self.decoder
+                    )
+                    y = self.ln(yMLP)
+                    h = self.ln(h + y)
+
+                if return_intermediate_logits:
+                    step_logits = h.view(B, T, D) @ self.lm_head
+                    intermediate_logits.append(step_logits)
+
+            x = h
 
         elif demo_len > 0:
             # Unified sequence with demonstrations followed by query tokens
@@ -210,64 +233,88 @@ class BDHCQ(nn.Module):
                 y_demo = self.ln(yMLP_demo)
                 x_demo = self.ln(x_demo + y_demo)
 
-                # Query hybrid attention
-                if T_query > 0:
-                    x_query_latent = x_query @ self.encoder
-                    x_query_sparse = F.relu(x_query_latent)  # B, nh, T_query, N
-
-                    a_self_query = self.attn(
-                        Q=x_query_sparse, K=x_query_sparse, V=x_query
-                    )
-                    a_mem_query = x_query_sparse @ rho_l  # B, nh, T_query, D
-                    yKV_query = self.ln(a_self_query + a_mem_query)
-
-                    y_query_latent = yKV_query @ self.encoder_v
-                    y_query_sparse = F.relu(y_query_latent)
-                    xy_query_sparse = self.drop(x_query_sparse * y_query_sparse)
-                    yMLP_query = (
-                        xy_query_sparse.transpose(1, 2).reshape(B, 1, T_query, N * nh)
-                        @ self.decoder
-                    )
-                    y_query = self.ln(yMLP_query)
-                    x_query = self.ln(x_query + y_query)
-
+            # Query hybrid recurrent reasoning passes
             if T_query > 0:
+                h = x_query
+                for r in range(R):
+                    for level in range(C.n_layer):
+                        rho_l = accumulated_memory[level]
+                        x_query_latent = h @ self.encoder
+                        x_query_sparse = F.relu(x_query_latent)  # B, nh, T_query, N
+
+                        a_self_query = self.attn(
+                            Q=x_query_sparse, K=x_query_sparse, V=h
+                        )
+                        a_mem_query = x_query_sparse @ rho_l  # B, nh, T_query, D
+                        yKV_query = self.ln(a_self_query + a_mem_query)
+
+                        y_query_latent = yKV_query @ self.encoder_v
+                        y_query_sparse = F.relu(y_query_latent)
+                        xy_query_sparse = self.drop(x_query_sparse * y_query_sparse)
+                        yMLP_query = (
+                            xy_query_sparse.transpose(1, 2).reshape(
+                                B, 1, T_query, N * nh
+                            )
+                            @ self.decoder
+                        )
+                        y_query = self.ln(yMLP_query)
+                        h = self.ln(h + y_query)
+
+                    if return_intermediate_logits:
+                        step_x = torch.cat([x_demo, h], dim=2)
+                        step_logits = step_x.view(B, T, D) @ self.lm_head
+                        intermediate_logits.append(step_logits)
+
+                x_query = h
                 x = torch.cat([x_demo, x_query], dim=2)
             else:
                 x = x_demo
+                if return_intermediate_logits:
+                    demo_logits = x.view(B, T, D) @ self.lm_head
+                    intermediate_logits = [demo_logits] * R
 
         else:
             # Baseline execution without demonstrations
-            for level in range(C.n_layer):
-                x_latent = x @ self.encoder
-                x_sparse = F.relu(x_latent)  # B, nh, T, N
+            h = x
+            for r in range(R):
+                for level in range(C.n_layer):
+                    x_latent = h @ self.encoder
+                    x_sparse = F.relu(x_latent)  # B, nh, T, N
 
-                yKV = self.attn(
-                    Q=x_sparse,
-                    K=x_sparse,
-                    V=x,
-                )
-                yKV = self.ln(yKV)
+                    yKV = self.attn(
+                        Q=x_sparse,
+                        K=x_sparse,
+                        V=h,
+                    )
+                    yKV = self.ln(yKV)
 
-                y_latent = yKV @ self.encoder_v
-                y_sparse = F.relu(y_latent)
-                xy_sparse = x_sparse * y_sparse  # B, nh, T, N
+                    y_latent = yKV @ self.encoder_v
+                    y_sparse = F.relu(y_latent)
+                    xy_sparse = self.drop(x_sparse * y_sparse)  # B, nh, T, N
 
-                xy_sparse = self.drop(xy_sparse)
+                    yMLP = (
+                        xy_sparse.transpose(1, 2).reshape(B, 1, T, N * nh) @ self.decoder
+                    )  # B, 1, T, D
+                    y = self.ln(yMLP)
+                    h = self.ln(h + y)
 
-                yMLP = (
-                    xy_sparse.transpose(1, 2).reshape(B, 1, T, N * nh) @ self.decoder
-                )  # B, 1, T, D
-                y = self.ln(yMLP)
-                x = self.ln(x + y)
+                if return_intermediate_logits:
+                    step_logits = h.view(B, T, D) @ self.lm_head
+                    intermediate_logits.append(step_logits)
+
+            x = h
 
         logits = x.view(B, T, D) @ self.lm_head
         loss = None
         if targets is not None:
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
 
+        if return_contextual_memory and return_intermediate_logits:
+            return logits, loss, accumulated_memory, intermediate_logits
         if return_contextual_memory:
             return logits, loss, accumulated_memory
+        if return_intermediate_logits:
+            return logits, loss, intermediate_logits
         return logits, loss
 
     @torch.no_grad()
@@ -279,14 +326,21 @@ class BDHCQ(nn.Module):
         top_k: int | None = None,
         demo_len: int = 0,
         contextual_memory: list[torch.Tensor] | None = None,
+        latent_reasoning_steps: int | None = None,
     ) -> torch.Tensor:
+        prefix_demo = None
         if contextual_memory is None and demo_len > 0:
-            contextual_memory = self.encode_contextual_memory(idx[:, :demo_len])
+            prefix_demo = idx[:, :demo_len]
+            contextual_memory = self.encode_contextual_memory(prefix_demo)
             idx = idx[:, demo_len:]
 
         for _ in range(max_new_tokens):
             idx_cond = idx
-            logits, _ = self(idx_cond, contextual_memory=contextual_memory)
+            logits, _ = self(
+                idx_cond,
+                contextual_memory=contextual_memory,
+                latent_reasoning_steps=latent_reasoning_steps,
+            )
             logits = logits[:, -1, :] / temperature
             if top_k is not None:
                 values, _ = torch.topk(logits, min(top_k, logits.size(-1)))
@@ -294,6 +348,9 @@ class BDHCQ(nn.Module):
             probs = F.softmax(logits, dim=-1)
             idx_next = torch.multinomial(probs, num_samples=1)
             idx = torch.cat((idx, idx_next), dim=1)
+
+        if prefix_demo is not None:
+            idx = torch.cat((prefix_demo, idx), dim=1)
         return idx
 
 
@@ -359,23 +416,80 @@ class ConfiguredBDHCQ(BaseModel):
         input_ids: torch.Tensor,
         demo_len: int = 0,
         contextual_memory: list[torch.Tensor] | None = None,
-    ) -> torch.Tensor:
+        latent_reasoning_steps: int | None = None,
+        return_intermediate_logits: bool = False,
+    ) -> torch.Tensor | tuple[torch.Tensor, list[torch.Tensor]]:
         if input_ids.ndim != 2:
             raise ValueError("input_ids must have shape [batch, sequence].")
         if input_ids.size(1) > self.context_length:
             raise ValueError(
                 f"Sequence length {input_ids.size(1)} exceeds context_length={self.context_length}."
             )
+        if return_intermediate_logits:
+            logits, _, intermediate_logits = self.network(
+                input_ids,
+                demo_len=demo_len,
+                contextual_memory=contextual_memory,
+                latent_reasoning_steps=latent_reasoning_steps,
+                return_intermediate_logits=True,
+            )
+            return logits, intermediate_logits
+
         logits, _ = self.network(
-            input_ids, demo_len=demo_len, contextual_memory=contextual_memory
+            input_ids,
+            demo_len=demo_len,
+            contextual_memory=contextual_memory,
+            latent_reasoning_steps=latent_reasoning_steps,
         )
         return logits
+
+    @torch.no_grad()
+    def generate(
+        self,
+        input_ids: torch.Tensor,
+        max_new_tokens: int,
+        temperature: float = 1.0,
+        top_k: int | None = None,
+        demo_len: int = 0,
+        contextual_memory: list[torch.Tensor] | None = None,
+        latent_reasoning_steps: int | None = None,
+    ) -> torch.Tensor:
+        if input_ids.ndim != 2:
+            raise ValueError("input_ids must have shape [batch, sequence].")
+        if input_ids.size(1) < 1:
+            raise ValueError("input_ids must contain at least one token.")
+        if max_new_tokens < 0:
+            raise ValueError("max_new_tokens must be non-negative.")
+        if temperature <= 0:
+            raise ValueError("temperature must be positive.")
+        if input_ids.size(1) > self.context_length:
+            raise ValueError(
+                f"Prompt length {input_ids.size(1)} exceeds context_length={self.context_length}."
+            )
+        return self.network.generate(
+            idx=input_ids,
+            max_new_tokens=max_new_tokens,
+            temperature=temperature,
+            top_k=top_k,
+            demo_len=demo_len,
+            contextual_memory=contextual_memory,
+            latent_reasoning_steps=latent_reasoning_steps,
+        )
 
     def training_step(
         self, batch: Mapping[str, torch.Tensor | int], batch_idx: int
     ) -> Mapping[str, torch.Tensor]:
         demo_len = int(batch.get("demo_len", 0))
-        logits = self(batch["input_ids"], demo_len=demo_len)
+        latent_reasoning_steps = (
+            int(batch["latent_reasoning_steps"])
+            if "latent_reasoning_steps" in batch
+            else None
+        )
+        logits = self(
+            batch["input_ids"],
+            demo_len=demo_len,
+            latent_reasoning_steps=latent_reasoning_steps,
+        )
         return {
             "loss": F.cross_entropy(
                 logits.reshape(-1, logits.size(-1)), batch["target_ids"].reshape(-1)
@@ -386,7 +500,16 @@ class ConfiguredBDHCQ(BaseModel):
         self, batch: Mapping[str, torch.Tensor | int], batch_idx: int
     ) -> Mapping[str, torch.Tensor]:
         demo_len = int(batch.get("demo_len", 0))
-        logits = self(batch["input_ids"], demo_len=demo_len)
+        latent_reasoning_steps = (
+            int(batch["latent_reasoning_steps"])
+            if "latent_reasoning_steps" in batch
+            else None
+        )
+        logits = self(
+            batch["input_ids"],
+            demo_len=demo_len,
+            latent_reasoning_steps=latent_reasoning_steps,
+        )
         return {
             "loss": F.cross_entropy(
                 logits.reshape(-1, logits.size(-1)), batch["target_ids"].reshape(-1)

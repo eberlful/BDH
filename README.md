@@ -52,6 +52,20 @@ uv run python main.py generate runs/20260812-120000-a1b2c3 \
 Use `2 * blank_count + 1` for `--max-tokens` to request all position/value
 pairs and the end token.
 
+For Sudoku Chain-of-Thought (CoT) runs with GPT-2 tokenization:
+
+```bash
+uv run python main.py train configs/sudoku_cot.yaml
+```
+
+To generate step-by-step reasoning and full solution from a checkpoint:
+
+```bash
+uv run python main.py generate runs/20260812-120000-a1b2c3 \
+  530070000600195000098000060800060003400803001700020006060000280000419005000080079 \
+  --max-tokens 600
+```
+
 The original BDH architecture is registered as `bdh`; the configurable causal
 Transformer reference model is registered as `bdh_transformer`. Custom
 components can register themselves from Python modules listed in the YAML

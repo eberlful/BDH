@@ -96,6 +96,21 @@ def run_generate(run_dir: Path, prompt: str, max_tokens: int) -> int:
     trainer.setup()
     if config["data"]["name"] == "sudoku":
         token_ids = encode_sudoku_prompt(prompt)
+    elif config["data"]["name"] == "sudoku_cot":
+        tokenizer = getattr(trainer.data_module, "tokenizer", None)
+        if tokenizer is None:
+            raise ValueError("SudokuCoT requires a valid tokenizer on data module.")
+        if not prompt.startswith("Sudoku:"):
+            try:
+                digits = [int(c) for c in prompt if c.isdigit()]
+                if len(digits) == 81:
+                    from .data.sudoku_cot import build_sudoku_cot_prompt
+                    prompt = build_sudoku_cot_prompt(digits)
+            except Exception:
+                pass
+        token_ids = tokenizer.encode(prompt, allowed_special={"<|endoftext|>"})
+        if not token_ids:
+            raise ValueError("Prompt must contain at least one token.")
     else:
         tokenizer = getattr(trainer.data_module, "tokenizer", None)
         if tokenizer is None or not callable(getattr(tokenizer, "encode", None)) or not callable(

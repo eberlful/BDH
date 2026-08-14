@@ -204,7 +204,7 @@ class TrainingEnvironmentTests(unittest.TestCase):
             tokens = [int(token) for token in output.getvalue().split()]
             self.assertEqual(tokens[:81], [int(value) for value in prompt])
             self.assertEqual(tokens[81], SUDOKU_SEPARATOR_TOKEN)
-            self.assertEqual(len(tokens), 84)
+            self.assertEqual(len(tokens), 85)
 
     def test_short_training_creates_checkpoints_and_logs(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -1,6 +1,7 @@
 import unittest
 import torch
 from torch import nn
+from torch.nn import functional as F
 
 from src.core.base import BaseModel
 from src.core.registry import MODEL_REGISTRY, load_builtin_components
@@ -421,7 +422,172 @@ class TestBDHCQArchitecture(unittest.TestCase):
         self.assertEqual(generated_demo.shape, (1, 12))
 
 
+    def test_loss_schedule_configuration_and_validation(self):
+        # Default loss schedule is "ramp"
+        model = ConfiguredBDHCQ(
+            vocab_size=32,
+            context_length=16,
+            n_layer=2,
+            n_embd=64,
+            n_head=2,
+            mlp_internal_dim_multiplier=16,
+        )
+        self.assertEqual(model.loss_schedule, "ramp")
+
+        # Valid loss schedules
+        for sched in ("ramp", "uniform", "final_only"):
+            m = ConfiguredBDHCQ(
+                vocab_size=32,
+                context_length=16,
+                n_layer=2,
+                n_embd=64,
+                n_head=2,
+                mlp_internal_dim_multiplier=16,
+                loss_schedule=sched,
+            )
+            self.assertEqual(m.loss_schedule, sched)
+
+        # Invalid loss schedule
+        with self.assertRaises(ValueError):
+            ConfiguredBDHCQ(
+                vocab_size=32,
+                context_length=16,
+                n_layer=2,
+                n_embd=64,
+                n_head=2,
+                mlp_internal_dim_multiplier=16,
+                loss_schedule="invalid_schedule",
+            )
+
+    def test_deep_supervision_loss_schedules_calculation(self):
+        torch.manual_seed(42)
+        model = ConfiguredBDHCQ(
+            vocab_size=32,
+            context_length=32,
+            n_layer=2,
+            n_embd=64,
+            n_head=2,
+            mlp_internal_dim_multiplier=16,
+            latent_reasoning_steps=3,
+            dropout=0.0,
+        )
+        model.eval()
+
+        input_ids = torch.randint(0, 32, (2, 8))
+        target_ids = torch.randint(0, 32, (2, 8))
+
+        # Get intermediate logits
+        _, intermediate_logits = model(
+            input_ids, latent_reasoning_steps=3, return_intermediate_logits=True
+        )
+        self.assertEqual(len(intermediate_logits), 3)
+
+        l1 = F.cross_entropy(
+            intermediate_logits[0].reshape(-1, 32), target_ids.reshape(-1)
+        )
+        l2 = F.cross_entropy(
+            intermediate_logits[1].reshape(-1, 32), target_ids.reshape(-1)
+        )
+        l3 = F.cross_entropy(
+            intermediate_logits[2].reshape(-1, 32), target_ids.reshape(-1)
+        )
+
+        # 1. Ramp schedule: w1 = 1/6, w2 = 2/6, w3 = 3/6
+        batch_ramp = {
+            "input_ids": input_ids,
+            "target_ids": target_ids,
+            "loss_schedule": "ramp",
+            "latent_reasoning_steps": 3,
+        }
+        loss_ramp = model.training_step(batch_ramp, 0)["loss"]
+        expected_ramp = (1 / 6) * l1 + (2 / 6) * l2 + (3 / 6) * l3
+        self.assertTrue(torch.allclose(loss_ramp, expected_ramp, atol=1e-5))
+
+        # 2. Uniform schedule: w1 = 1/3, w2 = 1/3, w3 = 1/3
+        batch_uniform = {
+            "input_ids": input_ids,
+            "target_ids": target_ids,
+            "loss_schedule": "uniform",
+            "latent_reasoning_steps": 3,
+        }
+        loss_uniform = model.training_step(batch_uniform, 0)["loss"]
+        expected_uniform = (1 / 3) * l1 + (1 / 3) * l2 + (1 / 3) * l3
+        self.assertTrue(torch.allclose(loss_uniform, expected_uniform, atol=1e-5))
+
+        # 3. Final only schedule: w1 = 0, w2 = 0, w3 = 1.0
+        batch_final = {
+            "input_ids": input_ids,
+            "target_ids": target_ids,
+            "loss_schedule": "final_only",
+            "latent_reasoning_steps": 3,
+        }
+        loss_final = model.training_step(batch_final, 0)["loss"]
+        self.assertTrue(torch.allclose(loss_final, l3, atol=1e-5))
+
+    def test_deep_supervision_gradients_propagate_through_all_steps(self):
+        torch.manual_seed(42)
+        model = ConfiguredBDHCQ(
+            vocab_size=32,
+            context_length=32,
+            n_layer=2,
+            n_embd=64,
+            n_head=2,
+            mlp_internal_dim_multiplier=16,
+            latent_reasoning_steps=3,
+            loss_schedule="ramp",
+            dropout=0.0,
+        )
+
+        input_ids = torch.randint(0, 32, (2, 8))
+        target_ids = torch.randint(0, 32, (2, 8))
+        batch = {
+            "input_ids": input_ids,
+            "target_ids": target_ids,
+            "demo_len": 4,
+            "loss_schedule": "ramp",
+            "latent_reasoning_steps": 3,
+        }
+
+        out = model.training_step(batch, 0)
+        loss = out["loss"]
+        loss.backward()
+
+        self.assertIsNotNone(model.network.encoder.grad)
+        self.assertIsNotNone(model.network.encoder_v.grad)
+        self.assertIsNotNone(model.network.decoder.grad)
+        self.assertIsNotNone(model.network.embed.weight.grad)
+        self.assertIsNotNone(model.network.lm_head.grad)
+        self.assertTrue(torch.count_nonzero(model.network.encoder.grad) > 0)
+        self.assertTrue(torch.count_nonzero(model.network.encoder_v.grad) > 0)
+        self.assertTrue(torch.count_nonzero(model.network.decoder.grad) > 0)
+
+    def test_deterministic_training_and_validation_step(self):
+        torch.manual_seed(42)
+        model = ConfiguredBDHCQ(
+            vocab_size=32,
+            context_length=32,
+            n_layer=2,
+            n_embd=64,
+            n_head=2,
+            mlp_internal_dim_multiplier=16,
+            latent_reasoning_steps=2,
+            loss_schedule="ramp",
+            dropout=0.0,
+        )
+        model.eval()
+
+        input_ids = torch.randint(0, 32, (2, 8))
+        target_ids = torch.randint(0, 32, (2, 8))
+        batch = {"input_ids": input_ids, "target_ids": target_ids, "demo_len": 4}
+
+        train_loss = model.training_step(batch, 0)["loss"]
+        val_loss = model.validation_step(batch, 0)["loss"]
+
+        self.assertTrue(torch.allclose(train_loss, val_loss, atol=1e-6))
+
+
 if __name__ == "__main__":
     unittest.main()
+
 
 

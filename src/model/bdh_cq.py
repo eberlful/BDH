@@ -21,6 +21,25 @@ class BDHCQConfig:
     mlp_internal_dim_multiplier: int = 128
     vocab_size: int = 256
     latent_reasoning_steps: int = 1
+    loss_schedule: str = "ramp"
+
+
+def compute_loss_schedule_weights(steps: int, schedule: str) -> list[float]:
+    if steps < 1:
+        raise ValueError("steps must be at least 1.")
+    if schedule == "ramp":
+        total = sum(range(1, steps + 1))
+        return [r / total for r in range(1, steps + 1)]
+    elif schedule == "uniform":
+        return [1.0 / steps for _ in range(steps)]
+    elif schedule == "final_only":
+        weights = [0.0] * steps
+        weights[-1] = 1.0
+        return weights
+    else:
+        raise ValueError(
+            f"Invalid loss_schedule '{schedule}'. Expected one of 'ramp', 'uniform', 'final_only'."
+        )
 
 
 def get_freqs(n: int, theta: float, dtype: torch.dtype) -> torch.Tensor:
@@ -368,6 +387,7 @@ class ConfiguredBDHCQ(BaseModel):
         dropout: float = 0.1,
         mlp_internal_dim_multiplier: int = 128,
         latent_reasoning_steps: int = 1,
+        loss_schedule: str = "ramp",
         learning_rate: float = 3e-4,
         weight_decay: float = 0.1,
     ) -> None:
@@ -395,11 +415,16 @@ class ConfiguredBDHCQ(BaseModel):
             raise ValueError("dropout must be between 0.0 and 1.0.")
         if latent_reasoning_steps < 1:
             raise ValueError("latent_reasoning_steps must be at least 1.")
+        if loss_schedule not in ("ramp", "uniform", "final_only"):
+            raise ValueError(
+                f"Invalid loss_schedule '{loss_schedule}'. Expected one of 'ramp', 'uniform', 'final_only'."
+            )
 
         self.vocab_size = vocab_size_int
         self.context_length = context_length
         self.learning_rate = learning_rate
         self.weight_decay = weight_decay
+        self.loss_schedule = loss_schedule
         self.config = BDHCQConfig(
             n_layer=n_layer,
             n_embd=n_embd,
@@ -408,6 +433,7 @@ class ConfiguredBDHCQ(BaseModel):
             mlp_internal_dim_multiplier=mlp_internal_dim_multiplier,
             vocab_size=self.vocab_size,
             latent_reasoning_steps=latent_reasoning_steps,
+            loss_schedule=loss_schedule,
         )
         self.network = BDHCQ(self.config)
 
@@ -476,45 +502,59 @@ class ConfiguredBDHCQ(BaseModel):
             latent_reasoning_steps=latent_reasoning_steps,
         )
 
-    def training_step(
-        self, batch: Mapping[str, torch.Tensor | int], batch_idx: int
-    ) -> Mapping[str, torch.Tensor]:
+    def _compute_loss(
+        self,
+        batch: Mapping[str, torch.Tensor | int | str],
+    ) -> torch.Tensor:
         demo_len = int(batch.get("demo_len", 0))
         latent_reasoning_steps = (
             int(batch["latent_reasoning_steps"])
             if "latent_reasoning_steps" in batch
-            else None
+            else self.config.latent_reasoning_steps
         )
-        logits = self(
+        loss_schedule = (
+            str(batch["loss_schedule"])
+            if "loss_schedule" in batch
+            else self.loss_schedule
+        )
+        target_ids = batch["target_ids"]
+
+        weights = compute_loss_schedule_weights(latent_reasoning_steps, loss_schedule)
+        if len(weights) == 1:
+            logits = self(
+                batch["input_ids"],
+                demo_len=demo_len,
+                latent_reasoning_steps=latent_reasoning_steps,
+            )
+            return F.cross_entropy(
+                logits.reshape(-1, logits.size(-1)), target_ids.reshape(-1)
+            )
+
+        logits, intermediate_logits = self(
             batch["input_ids"],
             demo_len=demo_len,
             latent_reasoning_steps=latent_reasoning_steps,
+            return_intermediate_logits=True,
         )
-        return {
-            "loss": F.cross_entropy(
-                logits.reshape(-1, logits.size(-1)), batch["target_ids"].reshape(-1)
-            )
-        }
+        loss = torch.tensor(0.0, device=logits.device, dtype=logits.dtype)
+        for w, step_logits in zip(weights, intermediate_logits):
+            if w > 0:
+                step_loss = F.cross_entropy(
+                    step_logits.reshape(-1, step_logits.size(-1)),
+                    target_ids.reshape(-1),
+                )
+                loss = loss + w * step_loss
+        return loss
+
+    def training_step(
+        self, batch: Mapping[str, torch.Tensor | int | str], batch_idx: int
+    ) -> Mapping[str, torch.Tensor]:
+        return {"loss": self._compute_loss(batch)}
 
     def validation_step(
-        self, batch: Mapping[str, torch.Tensor | int], batch_idx: int
+        self, batch: Mapping[str, torch.Tensor | int | str], batch_idx: int
     ) -> Mapping[str, torch.Tensor]:
-        demo_len = int(batch.get("demo_len", 0))
-        latent_reasoning_steps = (
-            int(batch["latent_reasoning_steps"])
-            if "latent_reasoning_steps" in batch
-            else None
-        )
-        logits = self(
-            batch["input_ids"],
-            demo_len=demo_len,
-            latent_reasoning_steps=latent_reasoning_steps,
-        )
-        return {
-            "loss": F.cross_entropy(
-                logits.reshape(-1, logits.size(-1)), batch["target_ids"].reshape(-1)
-            )
-        }
+        return {"loss": self._compute_loss(batch)}
 
     def configure_optimizers(self) -> torch.optim.Optimizer:
         return torch.optim.AdamW(

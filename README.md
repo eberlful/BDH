@@ -77,13 +77,27 @@ uv run python main.py generate runs/20260812-120000-a1b2c3 \
   --max-tokens 600
 ```
 
-The original BDH architecture is registered as `bdh`; the configurable causal
-Transformer reference model is registered as `bdh_transformer`. Custom
-components can register themselves from Python modules listed in the YAML
-`plugins` list.
+For BDH-CQ (In-Context Recurrent Memory & Latent Workspace Reasoning) runs:
+
+```bash
+uv run python main.py train configs/bdh_cq.yaml
+```
+
+Configure recurrent latent reasoning steps and deep supervision loss schedules:
+- `model.params.latent_reasoning_steps`: Number of recurrent passes ($R$) in the latent workspace without discrete token verbalization (supports dynamic test-time compute scaling).
+- `model.params.loss_schedule`: Multi-step deep supervision weighting across intermediate reasoning steps (`ramp`, `uniform`, or `final_only`).
+
+```bash
+uv run python main.py train configs/bdh_cq.yaml \
+  --set model.params.latent_reasoning_steps=4 \
+  --set model.params.loss_schedule=ramp
+```
+
+The original BDH architecture is registered as `bdh`; the contextual-query recurrent reasoning architecture is registered as `bdh_cq`; and the configurable causal Transformer reference model is registered as `bdh_transformer`. Custom components can register themselves from Python modules listed in the YAML `plugins` list.
 
 Run the tests with:
 
 ```bash
 uv run python -m unittest discover -v
 ```
+

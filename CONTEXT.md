@@ -19,3 +19,20 @@ _Avoid_: Input grid, problem prefix
 **Solution**:
 The final ground-truth target output produced by the model.
 _Avoid_: Completion, answer grid
+
+**Contextual Memory**:
+The accumulated associative recurrent state (fast-weights) constructed by sequentially ingesting task demonstrations into the model without an explicit key-value cache.
+_Avoid_: KV cache, demonstration buffer
+
+**Latent Workspace**:
+The continuous, high-dimensional intermediate representation iteratively refined over recurrent reasoning passes to solve a query without discrete token verbalization.
+_Avoid_: Scratchpad, hidden thoughts
+
+**Latent Reasoning Steps**:
+The number of recurrent depth iterations executed over the latent workspace for a query.
+_Avoid_: Thinking depth, recurrent unroll count
+
+**Deep Supervision**:
+The training regime of computing loss over intermediate latent reasoning steps in addition to the final step to stabilize gradient flow and trajectory convergence.
+_Avoid_: Layer-wise loss, intermediate penalty
+

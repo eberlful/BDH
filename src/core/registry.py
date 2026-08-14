@@ -82,6 +82,7 @@ def load_builtin_components() -> None:
     from ..data import sudoku_cot as _sudoku_cot  # noqa: F401
     from ..logging import loggers as _loggers  # noqa: F401
     from ..model import bdh as _model  # noqa: F401
+    from ..model import bdh_cq as _model_cq  # noqa: F401
     from ..training import trainer as _trainer  # noqa: F401
 
     _BUILTINS_LOADED = True

@@ -43,12 +43,10 @@ rho_l = x_demo_sparse.transpose(2, 3) @ x_demo.expand(-1, nh, -1, -1)
 ```mermaid
 graph LR
     subgraph "Hebbian-Style Synaptogenese"
-        K["Key: x_demo_sparse (N-dim)"]
-        V["Value: x_demo (D-dim)"]
-        K --> Outer["Äußeres Produkt: K^T ⊗ V"]
-        V --> Outer
-        Outer --> Accum["Summation über Zeit τ = 1 ... T_demo"]
-        Accum --> Rho["Schnellgewichtsmatrix ρ_{K, l} (N x D)"]
+        K["Key: x_demo_sparse (N-dim)"] -->|"(B, nh, 1, N)"| Outer["Äußeres Produkt: K^T ⊗ V"]
+        V["Value: x_demo (D-dim)"] -->|"(B, 1, 1, D)"| Outer
+        Outer -->|"(B, nh, N, D) pro Schritt τ"| Accum["Summation über Zeit τ = 1 ... T_demo"]
+        Accum -->|"(B, nh, N, D)"| Rho["Schnellgewichtsmatrix ρ_{K, l} (N x D)"]
     end
 ```
 
@@ -67,13 +65,13 @@ $$a^* = a_{self}^* + a_{mem}^*$$
 
 ```mermaid
 graph TD
-    Query["Query-Zustand x_r"] --> SelfAttn["RoPE Linear Attention"]
-    Query --> MatMul["Matrixmultiplikation: x_r @ ρ_{K, l}"]
-    Rho["Gefrorenes Gedächtnis ρ_{K, l}"] --> MatMul
+    Query["Query-Zustand x_r"] -->|"x_sparse: (B, nh, T_query, N)"| SelfAttn["RoPE Linear Attention"]
+    Query -->|"x_sparse: (B, nh, T_query, N)"| MatMul["Matrixmultiplikation: x_r @ ρ_{K, l}"]
+    Rho["Gefrorenes Gedächtnis ρ_{K, l}"] -->|"(B, nh, N, D)"| MatMul
     
-    SelfAttn --> Combine["Addiere: a* = a_self* + a_mem*"]
-    MatMul --> Combine
-    Combine --> Gating["Synaptisches Gating mit Encoder_V"]
+    SelfAttn -->|"a_self*: (B, nh, T_query, D)"| Combine["Addiere: a* = a_self* + a_mem*"]
+    MatMul -->|"a_mem*: (B, nh, T_query, D)"| Combine
+    Combine -->|"a*: (B, nh, T_query, D)"| Gating["Synaptisches Gating mit Encoder_V"]
 ```
 
 ---

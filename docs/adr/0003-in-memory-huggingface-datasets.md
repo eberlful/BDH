@@ -26,7 +26,7 @@ We introduce an in-memory streaming data architecture supporting Hugging Face da
 
 4. **Integration with Trainer Pipeline**:
    - Token streams are packaged into `TokenBlockDataset` instances providing unified non-overlapping blocks of `(input_ids, target_ids)` matching `context_length`.
-   - Compatible with `bdh_transformer`, `bdh`, and `bdh_cq` models via registry instantiation and CLI YAML configs (`configs/wikitext.yaml`, `configs/tiny_stories.yaml`).
+   - Compatible with `gpt_model` (`bdh_transformer`), `bdh`, and `bdh_cq` models via registry instantiation and CLI YAML configs (`configs/wikitext.yaml`, `configs/tiny_stories.yaml`).
 
 ## Consequences
 

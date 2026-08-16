@@ -24,30 +24,30 @@ Das Modell basiert auf PyTorch's `nn.TransformerEncoderLayer` und implementiert 
 
 ```mermaid
 graph TD
-    Input["Token-IDs (B, T)"] --> TokEmb["Token-Embedding (V, D)"]
-    Positions["Position-Indizes (0 ... T-1)"] --> PosEmb["Positional Embedding (C, D)"]
-    TokEmb --> Add["Vektoraddition: Hidden = TokEmb + PosEmb"]
-    PosEmb --> Add
+    Input["Token-IDs (B, T)"] -->|"(B, T)"| TokEmb["Token-Embedding (V, D)"]
+    Positions["Position-Indizes (0 ... T-1)"] -->|"(1, T)"| PosEmb["Positional Embedding (C, D)"]
+    TokEmb -->|"(B, T, D)"| Add["Vektoraddition: Hidden = TokEmb + PosEmb"]
+    PosEmb -->|"(1, T, D)"| Add
     
-    Add --> LayerStack["Transformer Encoder Stack (L Layer)"]
+    Add -->|"(B, T, D)"| LayerStack["Transformer Encoder Stack (L Layer)"]
     
     subgraph Layer ["Einzelner Transformer Layer (Pre-LN)"]
-        InL["Eingabe Hidden"] --> LN1["LayerNorm(d_model)"]
-        LN1 --> MHA["Multi-Head Self-Attention (n_heads) + Causal Mask"]
-        MHA --> Drop1["Dropout"]
-        Drop1 --> Res1["Residual Add (+)"]
-        InL --> Res1
+        InL["Eingabe Hidden"] -->|"(B, T, D)"| LN1["LayerNorm(d_model)"]
+        LN1 -->|"(B, T, D)"| MHA["Multi-Head Self-Attention (n_heads) + Causal Mask"]
+        MHA -->|"(B, T, D)"| Drop1["Dropout"]
+        Drop1 -->|"(B, T, D)"| Res1["Residual Add (+)"]
+        InL -->|"(B, T, D)"| Res1
         
-        Res1 --> LN2["LayerNorm(d_model)"]
-        LN2 --> FFN["GELU Feed-Forward Network (4 * d_model)"]
-        FFN --> Drop2["Dropout"]
-        Drop2 --> Res2["Residual Add (+)"]
-        Res1 --> Res2
+        Res1 -->|"(B, T, D)"| LN2["LayerNorm(d_model)"]
+        LN2 -->|"(B, T, D)"| FFN["GELU Feed-Forward Network (4 * d_model)"]
+        FFN -->|"(B, T, D)"| Drop2["Dropout"]
+        Drop2 -->|"(B, T, D)"| Res2["Residual Add (+)"]
+        Res1 -->|"(B, T, D)"| Res2
     end
     
-    LayerStack --> FinalLN["Final LayerNorm(d_model)"]
-    FinalLN --> LMHead["Linear LM Head (d_model -> V) <br> (Weight-Tied mit Token-Embedding)"]
-    LMHead --> Logits["Logits (B, T, V)"]
+    LayerStack -->|"(B, T, D)"| FinalLN["Final LayerNorm(d_model)"]
+    FinalLN -->|"(B, T, D)"| LMHead["Linear LM Head (d_model -> V) <br> (Weight-Tied mit Token-Embedding)"]
+    LMHead -->|"(B, T, V)"| Logits["Logits (B, T, V)"]
 ```
 
 ---

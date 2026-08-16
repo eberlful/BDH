@@ -63,18 +63,18 @@ Klassische Transformer verwenden dichte Multi-Layer-Perceptrons (MLP) mit quadra
 
 ```mermaid
 graph TD
-    X["Repräsentation x (D-dim)"] --> EncX["@ Encoder (D -> N)"]
-    EncX --> ReLU1["x_sparse = ReLU(x_latent)"]
+    X["Repräsentation x (D-dim)"] -->|"(B, 1, T, D)"| EncX["@ Encoder (nh, D, N)"]
+    EncX -->|"(B, nh, T, N)"| ReLU1["x_sparse = ReLU(x_latent)"]
     
-    YKV["Attention-Ausgabe yKV (D-dim)"] --> EncY["@ Encoder_V (D -> N)"]
-    EncY --> ReLU2["y_sparse = ReLU(y_latent)"]
+    YKV["Attention-Ausgabe yKV (D-dim)"] -->|"(B, nh, T, D)"| EncY["@ Encoder_V (nh, D, N)"]
+    EncY -->|"(B, nh, T, N)"| ReLU2["y_sparse = ReLU(y_latent)"]
     
-    ReLU1 --> Gate["Hadamard-Produkt: x_sparse ⊙ y_sparse"]
-    ReLU2 --> Gate
+    ReLU1 -->|"(B, nh, T, N)"| Gate["Hadamard-Produkt: x_sparse ⊙ y_sparse"]
+    ReLU2 -->|"(B, nh, T, N)"| Gate
     
-    Gate --> Drop["Dropout"]
-    Drop --> Dec["@ Decoder (N * nh -> D)"]
-    Dec --> Out["Ausgangssignal yMLP"]
+    Gate -->|"(B, nh, T, N)"| Drop["Dropout"]
+    Drop -->|"(B, 1, T, N * nh)"| Dec["@ Decoder (nh * N, D)"]
+    Dec -->|"(B, 1, T, D)"| Out["Ausgangssignal yMLP"]
 ```
 
 ### Warum $N \gg D$?
@@ -88,4 +88,5 @@ graph TD
 
 - [[BDH - Baby Dragon Hatchling]] – Gesamtaufbau des Basismodells.
 - [[BDH-CQ - Contextual Query]] – Nutzung von RoPE im hybriden Aufmerksamkeitsmodul.
+- [[LayerNorm & Flaschenhals-Dynamik]] – Zusammenspiel mit dem ReLU-Denoising und Flaschenhals-Projektionen.
 - [[Modellvergleich & Benchmarks]] – Mathematischer Vergleich.

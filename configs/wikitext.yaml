@@ -3,7 +3,7 @@ device: auto
 runs_dir: runs
 
 model:
-  name: bdh_transformer
+  name: gpt_model
   params:
     vocab_size: auto
     context_length: 256

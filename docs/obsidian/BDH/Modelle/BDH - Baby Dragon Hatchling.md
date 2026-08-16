@@ -32,26 +32,27 @@ Sei $x \in \mathbb{R}^{B \times 1 \times T \times D}$ der eingebettete und Layer
 
 ```mermaid
 graph TD
-    Input["Eingang x (B, 1, T, D)"] --> LN1["LayerNorm(x)"]
-    LN1 --> Enc["@ Encoder (nh, D, N)"]
-    Enc --> ReLU1["x_sparse = ReLU(x_latent) (B, nh, T, N)"]
+    Input["Eingang Token-IDs (B, T)"] -->|Embedding + Unsq| LN1["LayerNorm(x)"]
+    LN1 -->|"(B, 1, T, D)"| Enc["@ Encoder (nh, D, N)"]
+    Enc -->|"(B, nh, T, N)"| ReLU1["x_sparse = ReLU(x_latent)"]
     
-    ReLU1 --> Attn["Linear RoPE Attention(Q=x_sparse, K=x_sparse, V=x)"]
-    Attn --> LN2["LayerNorm(yKV)"]
-    LN2 --> EncV["@ Encoder_V (nh, D, N)"]
-    EncV --> ReLU2["y_sparse = ReLU(y_latent) (B, nh, T, N)"]
+    ReLU1 -->|"Q, K: (B, nh, T, N)"| Attn["Linear RoPE Attention(Q, K, V)"]
+    LN1 -->|"V: (B, 1, T, D)"| Attn
+    Attn -->|"(B, nh, T, D)"| LN2["LayerNorm(yKV)"]
+    LN2 -->|"(B, nh, T, D)"| EncV["@ Encoder_V (nh, D, N)"]
+    EncV -->|"(B, nh, T, N)"| ReLU2["y_sparse = ReLU(y_latent)"]
     
-    ReLU1 --> Mult["xy_sparse = Dropout(x_sparse ⊙ y_sparse)"]
-    ReLU2 --> Mult
+    ReLU1 -->|"(B, nh, T, N)"| Mult["xy_sparse = Dropout(x_sparse ⊙ y_sparse)"]
+    ReLU2 -->|"(B, nh, T, N)"| Mult
     
-    Mult --> Reshape["Reshape -> (B, 1, T, N * nh)"]
-    Reshape --> Dec["@ Decoder (nh * N, D)"]
-    Dec --> LN3["LayerNorm(yMLP)"]
+    Mult -->|"(B, nh, T, N)"| Reshape["Reshape -> (B, 1, T, N * nh)"]
+    Reshape -->|"(B, 1, T, N * nh)"| Dec["@ Decoder (nh * N, D)"]
+    Dec -->|"(B, 1, T, D)"| LN3["LayerNorm(yMLP)"]
     
-    LN1 --> Add["Residual Addition: x + y"]
-    LN3 --> Add
-    Add --> LN4["LayerNorm(x_next)"]
-    LN4 --> Output["Ausgang nächster Layer"]
+    LN1 -->|"(B, 1, T, D)"| Add["Residual Addition: x + y"]
+    LN3 -->|"(B, 1, T, D)"| Add
+    Add -->|"(B, 1, T, D)"| LN4["LayerNorm(x_next)"]
+    LN4 -->|"(B, 1, T, D)"| Output["Ausgang nächster Layer / LM-Head"]
 ```
 
 ### 1. Hochdimensionale Kodierung & Sparsität
@@ -128,4 +129,5 @@ class ConfiguredBDH(BaseModel):
 - [[BDH-CQ - Contextual Query]] – Erweiterung mit assoziativem Gedächtnis und latentem Denken.
 - [[BDH Transformer Baseline]] – Vergleichbare Standard-Transformer-Implementierung.
 - [[RoPE & Sparse Synaptic Gating]] – Details zur Implementierung der Frequenzen und Sparsität.
+- [[LayerNorm & Flaschenhals-Dynamik]] – Aufgaben und mathematische Bedeutung der parameterfreien LayerNorm.
 - [[Modellvergleich & Benchmarks]] – Direkter Leistungs- und Architekturvergleich.

@@ -41,23 +41,23 @@ Dieser Leitfaden vergleicht die drei im Repository implementierten Modellarchite
 ```mermaid
 graph TD
     subgraph "Standard Transformer"
-        T1["Eingang"] --> T2["Softmax MHA (D x D)"]
-        T2 --> T3["GELU FFN (D x 4D x D)"]
-        T3 --> T4["Token CoT Reasoning"]
+        T1["Eingang"] -->|"(B, T, D)"| T2["Softmax MHA (D x D)"]
+        T2 -->|"(B, T, D)"| T3["GELU FFN (D x 4D x D)"]
+        T3 -->|"(B, T, D)"| T4["Token CoT Reasoning"]
     end
     
     subgraph "BDH Basis"
-        B1["Eingang"] --> B2["Hochdimensionale Projektion (D -> N)"]
-        B2 --> B3["RoPE Linear Attention"]
-        B3 --> B4["Synaptisches Gating (x ⊙ y)"]
-        B4 --> B5["Decoder Projektion (N -> D)"]
+        B1["Eingang"] -->|"(B, 1, T, D)"| B2["Hochdimensionale Projektion (D -> N)"]
+        B2 -->|"(B, nh, T, N)"| B3["RoPE Linear Attention"]
+        B3 -->|"(B, nh, T, D)"| B4["Synaptisches Gating (x ⊙ y)"]
+        B4 -->|"(B, 1, T, N * nh)"| B5["Decoder Projektion (N -> D)"]
     end
     
     subgraph "BDH-CQ"
-        C1["Demonstrationen"] --> C2["Synaptische Fast-Weights ρ_{K, l}"]
-        C3["Query"] --> C4["Latenter Workspace H_r"]
-        C2 -.->|Assoziativer Abruf| C4
-        C4 -->|R Rekurrente Durchläufe| C5["Deep Supervision Readout"]
+        C1["Demonstrationen"] -->|"(B, T_demo)"| C2["Synaptische Fast-Weights ρ_{K, l}"]
+        C3["Query"] -->|"(B, 1, T_query, D)"| C4["Latenter Workspace H_r"]
+        C2 -.->|"Gedächtnis: (B, nh, N, D)"| C4
+        C4 -->|"R Durchläufe: (B, 1, T_query, D)"| C5["Deep Supervision Readout"]
     end
 ```
 

@@ -59,6 +59,7 @@ graph TD
 - **[[Assoziatives Gedächtnis & Fast-Weights]]**: Mathematische Herleitung der Fast-Weight-Akkumulation $\rho_{K,l} = \sum_{\tau} v_\tau x_\tau^T$ und des abrufenden Gedächtnisses.
 - **[[Latenter Workspace & Deep Supervision]]**: Rekurrente Denkzyklen ($H_0 \to H_R$), Gradientenstabilität und Test-Time Compute Scaling.
 - **[[RoPE & Sparse Synaptic Gating]]**: Quantisierte Frequenzverteilungen, Rotary Position Embeddings und ReLU-Aktivierungssparsität.
+- **[[LayerNorm & Flaschenhals-Dynamik]]**: Verhinderung von Norm-Explosionen, Kalibrierung für ReLU-Gating (Denoising), Trainingsstabilität und parameterfreie Head-Normalisierung.
 
 ---
 
@@ -68,7 +69,7 @@ graph TD
 | :--- | :--- | :--- | :--- |
 | **BDH** | `"bdh"` | `src/model/bdh.py` | `ConfiguredBDH` / `BDH` |
 | **BDH-CQ** | `"bdh_cq"` | `src/model/bdh_cq.py` | `ConfiguredBDHCQ` / `BDHCQ` |
-| **Transformer** | `"bdh_transformer"` | `src/model/bdh.py` | `BDHTransformer` |
+| **GPT Baseline** | `"gpt_model"` (`"bdh_transformer"`) | `src/model/bdh.py` | `GPTModel` (`BDHTransformer`) |
 
 > [!tip] Ausführung & Training
 > Sämtliche Modelle werden über das Registry-System instanziiert und können über `uv run python main.py --config configs/<config>.yaml` trainiert werden.

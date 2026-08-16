@@ -29,28 +29,28 @@ BDH-CQ operiert in zwei Phasen: Der **Demonstrations-Konditionierung** und der *
 ```mermaid
 graph TD
     subgraph Phase 1: Demonstration Ingestion
-        D["Demonstrations-Tokens D_1 ... D_k"] --> EmbedD["Embedding + LayerNorm"]
-        EmbedD --> BDHStack["BDH Layer Stack (1 ... L)"]
-        BDHStack --> FastWeights["Akkumuliere Fast-Weights:<br>ρ_{K, l} = Σ (v*_τ · x_τ^T)"]
+        D["Demonstrations-Tokens D_1 ... D_k"] -->|"(B, T_demo)"| EmbedD["Embedding + LayerNorm"]
+        EmbedD -->|"(B, 1, T_demo, D)"| BDHStack["BDH Layer Stack (1 ... L)"]
+        BDHStack -->|"x_sparse: (B, nh, T_demo, N)<br>x_demo: (B, 1, T_demo, D)"| FastWeights["Akkumuliere Fast-Weights:<br>ρ_{K, l} = Σ (v*_τ · x_τ^T)"]
     end
 
     subgraph Phase 2: Recurrent Latent Reasoning
-        Q["Query-Tokens x*"] --> H0["Initial Latent Workspace H_0"]
-        FastWeights -.->|"Gefrorenes Gedächtnis S_K"| Loop
+        Q["Query-Tokens x*"] -->|"(B, T_query)"| H0["Initial Latent Workspace H_0"]
+        FastWeights -.->|"Gefrorenes Gedächtnis S_K: (B, nh, N, D)"| Loop
         
         subgraph Loop ["Latent Reasoning Loop (r = 0 ... R-1)"]
-            H_in["Zustand H_r"] --> LayerL["BDH-CQ Layer l:"]
-            LayerL --> SelfAttn["a*_self = RoPE_LinearAttention(Q, K, V)"]
-            LayerL --> MemAttn["a*_mem = x_r @ ρ_{K, l}"]
-            SelfAttn --> Combine["a* = a*_self + a*_mem"]
-            MemAttn --> Combine
-            Combine --> Gating["y_r = ReLU(LN(a*) @ W_v) ⊙ x_r"]
-            Gating --> Upd["H_{r+1} = LN(H_r + LN(y_r @ W_dec))"]
+            H_in["Zustand H_r"] -->|"(B, 1, T_query, D)"| LayerL["BDH-CQ Layer l:"]
+            LayerL -->|"Q, K: (B, nh, T_query, N)<br>V: (B, 1, T_query, D)"| SelfAttn["a*_self = RoPE_LinearAttention(Q, K, V)"]
+            LayerL -->|"x_sparse: (B, nh, T_query, N)"| MemAttn["a*_mem = x_r @ ρ_{K, l}"]
+            SelfAttn -->|"(B, nh, T_query, D)"| Combine["a* = a*_self + a*_mem"]
+            MemAttn -->|"(B, nh, T_query, D)"| Combine
+            Combine -->|"(B, nh, T_query, D)"| Gating["y_r = ReLU(LN(a*) @ W_v) ⊙ x_r"]
+            Gating -->|"(B, nh, T_query, N)"| Upd["H_{r+1} = LN(H_r + LN(y_r @ W_dec))"]
         end
         
-        H0 --> Loop
-        Loop --> DeepSup["Deep Supervision / Readout"]
-        DeepSup --> Out["Logits_r = H_r @ W_readout<br>Loss = Σ w_r · CE(Logits_r, Targets)"]
+        H0 -->|"(B, 1, T_query, D)"| Loop
+        Loop -->|"(B, 1, T_query, D)"| DeepSup["Deep Supervision / Readout"]
+        DeepSup -->|"(B, T_query, V)"| Out["Logits_r = H_r @ W_readout<br>Loss = Σ w_r · CE(Logits_r, Targets)"]
     end
 ```
 

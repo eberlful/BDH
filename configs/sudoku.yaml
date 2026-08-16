@@ -1,9 +1,10 @@
 seed: 42
 device: auto
 runs_dir: runs
+verbose: false
 
 model:
-  name: bdh_transformer
+  name: gpt_model
   params:
     vocab_size: auto
     context_length: 256
@@ -15,20 +16,22 @@ model:
     weight_decay: 0.1
 
 data:
-  name: sudoku
+  name: sudoku_cot
   params:
     num_samples: 10000
     validation_fraction: 0.1
     clues: 30
     batch_size: 32
     context_length: 256
+    reasoning_mode: none  # Direct input-to-solution mapping without CoT steps
+    tokenizer: gpt2
     num_workers: 0
     shuffle: true
 
 trainer:
   name: torch
   max_epochs: 10
-  log_every_n_steps: 10
+  log_every_n_steps: 100
   validate_every_n_epochs: 1
   gradient_clip_norm: 1.0
   gradient_accumulation_steps: 1

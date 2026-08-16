@@ -99,11 +99,14 @@ For WikiText language modeling runs (zero-disk streaming from Hugging Face):
 uv run python main.py train configs/wikitext.yaml
 ```
 
-Override dataset configurations or context lengths:
+Override dataset configurations, context lengths, or reduce dataset size with sample limits:
+- `data.params.max_train_samples`: Maximum training samples to stream into memory (e.g. 3,670 for ~10% of WikiText-2, or 180,000 for ~10% of WikiText-103).
+- `data.params.max_val_samples`: Maximum validation samples to stream into memory.
 
 ```bash
 uv run python main.py train configs/wikitext.yaml \
   --set data.params.dataset_config=wikitext-103-raw-v1 \
+  --set data.params.max_train_samples=180000 \
   --set data.params.context_length=512
 ```
 
@@ -114,7 +117,8 @@ uv run python main.py train configs/tiny_stories.yaml
 ```
 
 Configure sample limits and memory streaming:
-- `data.params.max_train_samples`: Maximum training stories to stream into memory (default: 100,000 to keep RAM <200MB).
+- `data.params.max_train_samples`: Maximum training stories to stream into memory (default: 100,000 to keep RAM <200MB; e.g. 50,000 for ~2.5% of TinyStories).
+- `data.params.max_val_samples`: Maximum validation stories to stream into memory.
 - `data.params.in_memory`: Set to `true` (default) for zero-disk streaming without writing Arrow files to disk.
 
 ```bash

@@ -66,9 +66,9 @@ Dies geschieht ohne Einführung zusätzlicher lernbarer Parameter ($\gamma, \bet
 ```mermaid
 graph TD
     subgraph "Hochdimensionaler Raum R^n (n ~ 32.768)"
-        X["Aktivierung x (sparse, ~95% Nullen)"]
-        Y["Aktivierung y (sparse, ~95% Nullen)"]
-        Gating["Synaptisches Gating: x ⊙ y"]
+        X["Aktivierung: x_sparse (sparse)"]
+        Y["Aktivierung: y_sparse (sparse)"]
+        Gating["Synaptisches Gating: x_sparse ⊙ y_sparse"]
     end
 
     subgraph "Flaschenhals R^d (d ~ 256)"
@@ -78,12 +78,12 @@ graph TD
         LN_A["LayerNorm(a*)"]
     end
 
-    Gating -->|"(B, nh, T, N)"| V_star
-    V_star -->|"(B, 1, T, D)"| LN_V
-    LN_V -->|"Projektion Dx: (B, nh, T, N)"| X
-    LN_V -->|"(B, 1, T, D)"| Attn
-    Attn -->|"(B, nh, T, D)"| LN_A
-    LN_A -->|"Projektion Dy & ReLU: (B, nh, T, N)"| Y
+    Gating -->|"xy_sparse: (B, nh, T, N)"| V_star
+    V_star -->|"yMLP: (B, 1, T, D)"| LN_V
+    LN_V -->|"Projektion Dx -> x_sparse: (B, nh, T, N)"| X
+    LN_V -->|"v* = x: (B, 1, T, D)"| Attn
+    Attn -->|"yKV / a*: (B, nh, T, D)"| LN_A
+    LN_A -->|"Projektion Dy -> y_sparse: (B, nh, T, N)"| Y
 
     style LN_V fill:#f96,stroke:#333,stroke-width:2px
     style LN_A fill:#f96,stroke:#333,stroke-width:2px

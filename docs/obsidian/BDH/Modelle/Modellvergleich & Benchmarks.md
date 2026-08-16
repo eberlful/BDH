@@ -41,23 +41,23 @@ Dieser Leitfaden vergleicht die drei im Repository implementierten Modellarchite
 ```mermaid
 graph TD
     subgraph "Standard Transformer"
-        T1["Eingang"] -->|"(B, T, D)"| T2["Softmax MHA (D x D)"]
-        T2 -->|"(B, T, D)"| T3["GELU FFN (D x 4D x D)"]
-        T3 -->|"(B, T, D)"| T4["Token CoT Reasoning"]
+        T1["Eingang: h_0"] -->|"h: (B, T, D)"| T2["Softmax MHA (D x D)"]
+        T2 -->|"attn_out: (B, T, D)"| T3["GELU FFN (D x 4D x D)"]
+        T3 -->|"ffn_out: (B, T, D)"| T4["Token CoT Reasoning"]
     end
     
     subgraph "BDH Basis"
-        B1["Eingang"] -->|"(B, 1, T, D)"| B2["Hochdimensionale Projektion (D -> N)"]
-        B2 -->|"(B, nh, T, N)"| B3["RoPE Linear Attention"]
-        B3 -->|"(B, nh, T, D)"| B4["Synaptisches Gating (x ⊙ y)"]
-        B4 -->|"(B, 1, T, N * nh)"| B5["Decoder Projektion (N -> D)"]
+        B1["Eingang: x"] -->|"x: (B, 1, T, D)"| B2["Projektion: x @ W_enc"]
+        B2 -->|"x_sparse: (B, nh, T, N)"| B3["RoPE Linear Attention"]
+        B3 -->|"yKV: (B, nh, T, D)"| B4["Synaptisches Gating: x_sparse ⊙ y_sparse"]
+        B4 -->|"xy_sparse: (B, 1, T, N * nh)"| B5["Decoder Projektion: xy @ W_dec"]
     end
     
     subgraph "BDH-CQ"
-        C1["Demonstrationen"] -->|"(B, T_demo)"| C2["Synaptische Fast-Weights ρ_{K, l}"]
-        C3["Query"] -->|"(B, 1, T_query, D)"| C4["Latenter Workspace H_r"]
-        C2 -.->|"Gedächtnis: (B, nh, N, D)"| C4
-        C4 -->|"R Durchläufe: (B, 1, T_query, D)"| C5["Deep Supervision Readout"]
+        C1["Demonstrationen"] -->|"demo_idx: (B, T_demo)"| C2["Synaptische Fast-Weights ρ_{K, l}"]
+        C3["Query"] -->|"x_query: (B, 1, T_query, D)"| C4["Latenter Workspace H_r"]
+        C2 -.->|"Gedächtnis ρ_{K, l}: (B, nh, N, D)"| C4
+        C4 -->|"H_r (R Durchläufe): (B, 1, T_query, D)"| C5["Deep Supervision Readout"]
     end
 ```
 

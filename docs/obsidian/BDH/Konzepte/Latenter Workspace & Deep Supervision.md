@@ -26,18 +26,18 @@ Das [[BDH-CQ - Contextual Query\|BDH-CQ]] Modell verfolgt einen alternativen Ans
 ```mermaid
 graph TD
     subgraph "Klassisches Token-CoT (Transformer)"
-        Prompt1["Problem-Prompt"] -->|"(B, T_in)"| Tok1["Token: 'Schritt 1...'"]
-        Tok1 -->|"(B, T_in + 1)"| Tok2["Token: 'Schritt 2...'"]
-        Tok2 -->|"(B, T_in + 2)"| Tok3["Token: 'Daher ist...'"]
-        Tok3 -->|"(B, T_total)"| Sol1["Finale Lösung"]
+        Prompt1["Problem-Prompt: t_in"] -->|"t_in: (B, T_in)"| Tok1["Token 1: 'Schritt 1...'"]
+        Tok1 -->|"t_step1: (B, T_in + 1)"| Tok2["Token 2: 'Schritt 2...'"]
+        Tok2 -->|"t_step2: (B, T_in + 2)"| Tok3["Token 3: 'Daher ist...'"]
+        Tok3 -->|"t_final: (B, T_total)"| Sol1["Finale Lösung: y_tok"]
     end
     
     subgraph "BDH-CQ Latenter Workspace"
-        Prompt2["Problem-Prompt"] -->|"(B, 1, T_query, D)"| H0["H_0 (Initialer Vektor)"]
-        H0 -->|"Pass r=1: (B, 1, T_query, D)"| H1["H_1 (Latente Verfeinerung)"]
-        H1 -->|"Pass r=2: (B, 1, T_query, D)"| H2["H_2 (Hypothesenabgleich)"]
-        H2 -->|"Pass r=R: (B, 1, T_query, D)"| HR["H_R (Konvergierter Zustand)"]
-        HR -->|"LM-Head: (B, T_query, V)"| Sol2["Finale Lösung (direkt dekodiert)"]
+        Prompt2["Problem-Prompt: x_query"] -->|"x_query: (B, 1, T_query, D)"| H0["H_0 = x_query"]
+        H0 -->|"H_1: (B, 1, T_query, D)"| H1["H_1 (Latente Verfeinerung)"]
+        H1 -->|"H_2: (B, 1, T_query, D)"| H2["H_2 (Hypothesenabgleich)"]
+        H2 -->|"H_R: (B, 1, T_query, D)"| HR["H_R (Konvergierter Zustand)"]
+        HR -->|"Logits_R = H_R @ W_head: (B, T_query, V)"| Sol2["Finale Lösung: direkt dekodiert"]
     end
 ```
 

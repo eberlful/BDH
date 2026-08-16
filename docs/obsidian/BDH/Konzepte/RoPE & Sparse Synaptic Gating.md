@@ -63,18 +63,18 @@ Klassische Transformer verwenden dichte Multi-Layer-Perceptrons (MLP) mit quadra
 
 ```mermaid
 graph TD
-    X["Repräsentation x (D-dim)"] -->|"(B, 1, T, D)"| EncX["@ Encoder (nh, D, N)"]
-    EncX -->|"(B, nh, T, N)"| ReLU1["x_sparse = ReLU(x_latent)"]
+    X["Repräsentation: x"] -->|"x: (B, 1, T, D)"| EncX["@ Encoder W_enc (nh, D, N)"]
+    EncX -->|"x_latent: (B, nh, T, N)"| ReLU1["x_sparse = ReLU(x_latent)"]
     
-    YKV["Attention-Ausgabe yKV (D-dim)"] -->|"(B, nh, T, D)"| EncY["@ Encoder_V (nh, D, N)"]
-    EncY -->|"(B, nh, T, N)"| ReLU2["y_sparse = ReLU(y_latent)"]
+    YKV["Attention-Ausgabe: yKV"] -->|"yKV: (B, nh, T, D)"| EncY["@ Encoder_V W_enc_v (nh, D, N)"]
+    EncY -->|"y_latent: (B, nh, T, N)"| ReLU2["y_sparse = ReLU(y_latent)"]
     
-    ReLU1 -->|"(B, nh, T, N)"| Gate["Hadamard-Produkt: x_sparse ⊙ y_sparse"]
-    ReLU2 -->|"(B, nh, T, N)"| Gate
+    ReLU1 -->|"x_sparse: (B, nh, T, N)"| Gate["Hadamard-Produkt: x_sparse ⊙ y_sparse"]
+    ReLU2 -->|"y_sparse: (B, nh, T, N)"| Gate
     
-    Gate -->|"(B, nh, T, N)"| Drop["Dropout"]
-    Drop -->|"(B, 1, T, N * nh)"| Dec["@ Decoder (nh * N, D)"]
-    Dec -->|"(B, 1, T, D)"| Out["Ausgangssignal yMLP"]
+    Gate -->|"xy_sparse: (B, nh, T, N)"| Drop["Dropout"]
+    Drop -->|"xy_flat: (B, 1, T, N * nh)"| Dec["@ Decoder W_dec (nh * N, D)"]
+    Dec -->|"yMLP: (B, 1, T, D)"| Out["Ausgangssignal: y = LN(yMLP)"]
 ```
 
 ### Warum $N \gg D$?

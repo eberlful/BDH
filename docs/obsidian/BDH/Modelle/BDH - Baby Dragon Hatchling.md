@@ -32,27 +32,27 @@ Sei $x \in \mathbb{R}^{B \times 1 \times T \times D}$ der eingebettete und Layer
 
 ```mermaid
 graph TD
-    Input["Eingang Token-IDs (B, T)"] -->|Embedding + Unsq| LN1["LayerNorm(x)"]
-    LN1 -->|"(B, 1, T, D)"| Enc["@ Encoder (nh, D, N)"]
-    Enc -->|"(B, nh, T, N)"| ReLU1["x_sparse = ReLU(x_latent)"]
+    Input["Eingang Token-IDs: idx"] -->|"embed(idx): (B, 1, T, D)"| LN1["LayerNorm"]
+    LN1 -->|"x: (B, 1, T, D)"| Enc["@ Encoder W_enc / D_x (nh, D, N)"]
+    Enc -->|"x_latent: (B, nh, T, N)"| ReLU1["ReLU"]
     
-    ReLU1 -->|"Q, K: (B, nh, T, N)"| Attn["Linear RoPE Attention(Q, K, V)"]
-    LN1 -->|"V: (B, 1, T, D)"| Attn
-    Attn -->|"(B, nh, T, D)"| LN2["LayerNorm(yKV)"]
-    LN2 -->|"(B, nh, T, D)"| EncV["@ Encoder_V (nh, D, N)"]
-    EncV -->|"(B, nh, T, N)"| ReLU2["y_sparse = ReLU(y_latent)"]
+    ReLU1 -->|"x_sparse (Q, K): (B, nh, T, N)"| Attn["Linear RoPE Attention"]
+    LN1 -->|"x (V): (B, 1, T, D)"| Attn
+    Attn -->|"yKV / a*: (B, nh, T, D)"| LN2["LayerNorm"]
+    LN2 -->|"LN(yKV): (B, nh, T, D)"| EncV["@ Encoder_V W_enc_v / D_y (nh, D, N)"]
+    EncV -->|"y_latent: (B, nh, T, N)"| ReLU2["ReLU"]
     
-    ReLU1 -->|"(B, nh, T, N)"| Mult["xy_sparse = Dropout(x_sparse ⊙ y_sparse)"]
-    ReLU2 -->|"(B, nh, T, N)"| Mult
+    ReLU1 -->|"x_sparse: (B, nh, T, N)"| Mult["Dropout(x_sparse ⊙ y_sparse)"]
+    ReLU2 -->|"y_sparse: (B, nh, T, N)"| Mult
     
-    Mult -->|"(B, nh, T, N)"| Reshape["Reshape -> (B, 1, T, N * nh)"]
-    Reshape -->|"(B, 1, T, N * nh)"| Dec["@ Decoder (nh * N, D)"]
-    Dec -->|"(B, 1, T, D)"| LN3["LayerNorm(yMLP)"]
+    Mult -->|"xy_sparse: (B, nh, T, N)"| Reshape["Reshape"]
+    Reshape -->|"xy_flat: (B, 1, T, N * nh)"| Dec["@ Decoder W_dec / E^T (nh * N, D)"]
+    Dec -->|"yMLP: (B, 1, T, D)"| LN3["LayerNorm"]
     
-    LN1 -->|"(B, 1, T, D)"| Add["Residual Addition: x + y"]
-    LN3 -->|"(B, 1, T, D)"| Add
-    Add -->|"(B, 1, T, D)"| LN4["LayerNorm(x_next)"]
-    LN4 -->|"(B, 1, T, D)"| Output["Ausgang nächster Layer / LM-Head"]
+    LN1 -->|"x: (B, 1, T, D)"| Add["Residual Addition"]
+    LN3 -->|"y: (B, 1, T, D)"| Add
+    Add -->|"x + y: (B, 1, T, D)"| LN4["LayerNorm"]
+    LN4 -->|"x_next: (B, 1, T, D)"| Output["Nächster Layer / LM-Head"]
 ```
 
 ### 1. Hochdimensionale Kodierung & Sparsität

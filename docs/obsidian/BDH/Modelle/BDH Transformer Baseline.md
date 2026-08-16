@@ -24,30 +24,30 @@ Das Modell basiert auf PyTorch's `nn.TransformerEncoderLayer` und implementiert 
 
 ```mermaid
 graph TD
-    Input["Token-IDs (B, T)"] -->|"(B, T)"| TokEmb["Token-Embedding (V, D)"]
-    Positions["Position-Indizes (0 ... T-1)"] -->|"(1, T)"| PosEmb["Positional Embedding (C, D)"]
-    TokEmb -->|"(B, T, D)"| Add["Vektoraddition: Hidden = TokEmb + PosEmb"]
-    PosEmb -->|"(1, T, D)"| Add
+    Input["Token-IDs: idx"] -->|"idx: (B, T)"| TokEmb["Token-Embedding"]
+    Positions["Position-Indizes: pos"] -->|"pos: (1, T)"| PosEmb["Positional Embedding"]
+    TokEmb -->|"tok_emb: (B, T, D)"| Add["Addition: h_0 = tok_emb + pos_emb"]
+    PosEmb -->|"pos_emb: (1, T, D)"| Add
     
-    Add -->|"(B, T, D)"| LayerStack["Transformer Encoder Stack (L Layer)"]
+    Add -->|"h_0: (B, T, D)"| LayerStack["Transformer Encoder Stack (L Layer)"]
     
-    subgraph Layer ["Einzelner Transformer Layer (Pre-LN)"]
-        InL["Eingabe Hidden"] -->|"(B, T, D)"| LN1["LayerNorm(d_model)"]
-        LN1 -->|"(B, T, D)"| MHA["Multi-Head Self-Attention (n_heads) + Causal Mask"]
-        MHA -->|"(B, T, D)"| Drop1["Dropout"]
-        Drop1 -->|"(B, T, D)"| Res1["Residual Add (+)"]
-        InL -->|"(B, T, D)"| Res1
+    subgraph Layer ["Einzelner Transformer Layer l (Pre-LN)"]
+        InL["Eingabe: h_l"] -->|"h_l: (B, T, D)"| LN1["LayerNorm"]
+        LN1 -->|"LN(h_l): (B, T, D)"| MHA["Multi-Head Self-Attention + Mask"]
+        MHA -->|"attn_out: (B, T, D)"| Drop1["Dropout"]
+        Drop1 -->|"drop(attn_out): (B, T, D)"| Res1["Residual Add (+)"]
+        InL -->|"h_l: (B, T, D)"| Res1
         
-        Res1 -->|"(B, T, D)"| LN2["LayerNorm(d_model)"]
-        LN2 -->|"(B, T, D)"| FFN["GELU Feed-Forward Network (4 * d_model)"]
-        FFN -->|"(B, T, D)"| Drop2["Dropout"]
-        Drop2 -->|"(B, T, D)"| Res2["Residual Add (+)"]
-        Res1 -->|"(B, T, D)"| Res2
+        Res1 -->|"h_mid: (B, T, D)"| LN2["LayerNorm"]
+        LN2 -->|"LN(h_mid): (B, T, D)"| FFN["GELU Feed-Forward Network"]
+        FFN -->|"ffn_out: (B, T, 4*D)"| Drop2["Dropout -> (B, T, D)"]
+        Drop2 -->|"drop(ffn_out): (B, T, D)"| Res2["Residual Add (+)"]
+        Res1 -->|"h_mid: (B, T, D)"| Res2
     end
     
-    LayerStack -->|"(B, T, D)"| FinalLN["Final LayerNorm(d_model)"]
-    FinalLN -->|"(B, T, D)"| LMHead["Linear LM Head (d_model -> V) <br> (Weight-Tied mit Token-Embedding)"]
-    LMHead -->|"(B, T, V)"| Logits["Logits (B, T, V)"]
+    LayerStack -->|"h_L: (B, T, D)"| FinalLN["Final LayerNorm"]
+    FinalLN -->|"LN(h_L): (B, T, D)"| LMHead["Linear LM Head (W_head: D -> V)"]
+    LMHead -->|"logits: (B, T, V)"| Logits["Logits"]
 ```
 
 ---

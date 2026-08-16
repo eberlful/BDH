@@ -131,3 +131,5 @@ class ConfiguredBDH(BaseModel):
 - [[RoPE & Sparse Synaptic Gating]] – Details zur Implementierung der Frequenzen und Sparsität.
 - [[LayerNorm & Flaschenhals-Dynamik]] – Aufgaben und mathematische Bedeutung der parameterfreien LayerNorm.
 - [[Modellvergleich & Benchmarks]] – Direkter Leistungs- und Architekturvergleich.
+- [[Speicheroptimierung & VRAM-Reduktion]] – Analyse des VRAM-Bedarfs, Benchmarks und TODOs zur Speicherreduktion.
+

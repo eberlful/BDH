@@ -1,5 +1,6 @@
-from .bdh import BDH, BDHConfig, BDHTransformer, ConfiguredBDH
+from .bdh import BDH, BDHConfig, ConfiguredBDH
 from .bdh_cq import BDHCQ, BDHCQConfig, ConfiguredBDHCQ
+from .gpt import BDHTransformer, GPTModel
 
 __all__ = [
     "BDH",
@@ -9,5 +10,8 @@ __all__ = [
     "BDHTransformer",
     "ConfiguredBDH",
     "ConfiguredBDHCQ",
+    "GPTModel",
 ]
+
+
 

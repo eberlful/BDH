@@ -35,6 +35,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     },
     "callbacks": [{"name": "checkpoint", "params": {"save_best": True}}],
     "loggers": ["terminal", "text_file", "tensorboard"],
+    "verbose": False,
 }
 
 _ROOT_KEYS = {
@@ -47,6 +48,7 @@ _ROOT_KEYS = {
     "loggers",
     "model",
     "data",
+    "verbose",
 }
 
 

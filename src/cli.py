@@ -22,6 +22,7 @@ def build_parser() -> argparse.ArgumentParser:
     train = commands.add_parser("train", help="start a new training run")
     train.add_argument("config", type=Path)
     train.add_argument("--set", dest="overrides", action="append", default=[], metavar="PATH=VALUE")
+    train.add_argument("-v", "--verbose", action="store_true", help="enable verbose logging of training data and model predictions")
 
     validate = commands.add_parser("validate", help="validate configuration and registered components")
     validate.add_argument("config", type=Path)
@@ -30,6 +31,7 @@ def build_parser() -> argparse.ArgumentParser:
     resume = commands.add_parser("resume", help="resume the latest checkpoint in a run directory")
     resume.add_argument("run_dir", type=Path)
     resume.add_argument("--set", dest="overrides", action="append", default=[], metavar="PATH=VALUE")
+    resume.add_argument("-v", "--verbose", action="store_true", help="enable verbose logging of training data and model predictions")
 
     generate = commands.add_parser("generate", help="generate text from the best checkpoint in a run directory")
     generate.add_argument("run_dir", type=Path)
@@ -44,8 +46,10 @@ def _validate_and_load(path: Path, overrides: list[str]) -> dict[str, Any]:
     return config
 
 
-def run_train(config_path: Path, overrides: list[str]) -> int:
+def run_train(config_path: Path, overrides: list[str], verbose: bool = False) -> int:
     config = _validate_and_load(config_path, overrides)
+    if verbose:
+        config["verbose"] = True
     seed_everything(int(config.get("seed", 42)))
     runs_dir = Path(config.get("runs_dir", "runs"))
     run_dir = create_run_dir(runs_dir)
@@ -63,11 +67,13 @@ def run_validate(config_path: Path, overrides: list[str]) -> int:
     return 0
 
 
-def run_resume(run_dir: Path, overrides: list[str]) -> int:
+def run_resume(run_dir: Path, overrides: list[str], verbose: bool = False) -> int:
     config_path = run_dir / "config.yaml"
     if not config_path.exists():
         raise FileNotFoundError(f"Run directory does not contain {config_path.name}: {run_dir}")
     config = _validate_and_load(config_path, overrides)
+    if verbose:
+        config["verbose"] = True
     original = load_config(config_path)
     if component_signature(config) != component_signature(original):
         raise ValueError("Resume overrides cannot change model or data component names/parameters.")
@@ -138,11 +144,11 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         if args.command == "train":
-            return run_train(args.config, args.overrides)
+            return run_train(args.config, args.overrides, verbose=args.verbose)
         if args.command == "validate":
             return run_validate(args.config, args.overrides)
         if args.command == "resume":
-            return run_resume(args.run_dir, args.overrides)
+            return run_resume(args.run_dir, args.overrides, verbose=args.verbose)
         if args.command == "generate":
             return run_generate(args.run_dir, args.prompt, args.max_tokens)
         raise AssertionError(f"Unhandled command: {args.command}")

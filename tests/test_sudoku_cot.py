@@ -21,7 +21,7 @@ from src.data.sudoku_cot import (
     generate_cot_steps,
     parse_sudoku_grid,
 )
-from src.model.bdh import ConfiguredBDH, BDHTransformer
+from src.model.bdh import ConfiguredBDH, GPTModel
 from src.runtime import build_components
 from src.cli import run_generate
 
@@ -110,7 +110,7 @@ class SudokuCoTTests(unittest.TestCase):
         self.assertIn("loss", out)
         self.assertFalse(torch.isnan(out["loss"]))
 
-        transformer = BDHTransformer(vocab_size=50257, context_length=256, d_model=64, n_heads=2, n_layers=2)
+        transformer = GPTModel(vocab_size=50257, context_length=256, d_model=64, n_heads=2, n_layers=2)
         out_tf = transformer.training_step(batch, 0)
         self.assertIn("loss", out_tf)
         self.assertFalse(torch.isnan(out_tf["loss"]))
@@ -123,7 +123,7 @@ class SudokuCoTTests(unittest.TestCase):
                 "device": "cpu",
                 "runs_dir": str(Path(temp_dir) / "runs"),
                 "model": {
-                    "name": "bdh_transformer",
+                    "name": "gpt_model",
                     "params": {
                         "vocab_size": "auto",
                         "context_length": 128,
@@ -171,7 +171,7 @@ class SudokuCoTTests(unittest.TestCase):
                 "device": "cpu",
                 "runs_dir": str(Path(temp_dir) / "runs"),
                 "model": {
-                    "name": "bdh_transformer",
+                    "name": "gpt_model",
                     "params": {
                         "vocab_size": "auto",
                         "context_length": 128,
@@ -221,7 +221,7 @@ class SudokuCoTTests(unittest.TestCase):
                 "device": "cpu",
                 "runs_dir": str(Path(temp_dir) / "runs"),
                 "model": {
-                    "name": "bdh_transformer",
+                    "name": "gpt_model",
                     "params": {
                         "vocab_size": "auto",
                         "context_length": 512,

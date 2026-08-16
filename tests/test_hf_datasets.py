@@ -16,7 +16,7 @@ from src.data.hf import (
     WikiTextDataModule,
     _resolve_dataset_name,
 )
-from src.model.bdh import BDHTransformer
+from src.model.bdh import GPTModel
 
 
 class HuggingFaceDataModuleTests(unittest.TestCase):
@@ -286,7 +286,7 @@ class HuggingFaceDataModuleTests(unittest.TestCase):
                 in_memory=True,
             )
             module.setup("fit")
-            model = BDHTransformer(
+            model = GPTModel(
                 vocab_size=module.vocab_size,
                 context_length=module.context_length,
                 d_model=16,
@@ -312,7 +312,7 @@ class HuggingFaceDataModuleTests(unittest.TestCase):
                 in_memory=True,
             )
             module.setup("fit")
-            model = BDHTransformer(
+            model = GPTModel(
                 vocab_size=module.vocab_size,
                 context_length=module.context_length,
                 d_model=16,
@@ -339,7 +339,7 @@ class HuggingFaceDataModuleTests(unittest.TestCase):
                 "device": "cpu",
                 "runs_dir": str(root / "runs"),
                 "model": {
-                    "name": "bdh_transformer",
+                    "name": "gpt_model",
                     "params": {
                         "vocab_size": "auto",
                         "context_length": 16,
@@ -398,7 +398,7 @@ class HuggingFaceDataModuleTests(unittest.TestCase):
                 "device": "cpu",
                 "runs_dir": str(root / "runs"),
                 "model": {
-                    "name": "bdh_transformer",
+                    "name": "gpt_model",
                     "params": {
                         "vocab_size": "auto",
                         "context_length": 16,

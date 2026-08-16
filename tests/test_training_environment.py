@@ -20,7 +20,7 @@ from src.data.data import (
     encode_sudoku_prompt,
     is_valid_sudoku_board,
 )
-from src.model.bdh import BDHTransformer
+from src.model.bdh import GPTModel
 from src.runtime import build_components
 
 
@@ -31,7 +31,7 @@ class TrainingEnvironmentTests(unittest.TestCase):
             path.write_text(
                 yaml.safe_dump(
                     {
-                        "model": {"name": "bdh_transformer", "params": {"vocab_size": 32}},
+                        "model": {"name": "gpt_model", "params": {"vocab_size": 32}},
                         "data": {"name": "tiny_shakespeare", "params": {"tokenizer": "byte"}},
                     }
                 ),
@@ -46,7 +46,7 @@ class TrainingEnvironmentTests(unittest.TestCase):
             self.assertFalse(config["data"]["params"]["shuffle"])
 
     def test_transformer_forward_and_loss(self) -> None:
-        model = BDHTransformer(vocab_size=32, context_length=8, d_model=16, n_heads=4, n_layers=1)
+        model = GPTModel(vocab_size=32, context_length=8, d_model=16, n_heads=4, n_layers=1)
         batch = {
             "input_ids": torch.randint(0, 32, (2, 8)),
             "target_ids": torch.randint(0, 32, (2, 8)),
@@ -133,7 +133,7 @@ class TrainingEnvironmentTests(unittest.TestCase):
             "seed": 3,
             "device": "cpu",
             "model": {
-                "name": "bdh_transformer",
+                "name": "gpt_model",
                 "params": {
                     "vocab_size": "auto",
                     "context_length": 128,
@@ -170,7 +170,7 @@ class TrainingEnvironmentTests(unittest.TestCase):
                 "seed": 3,
                 "device": "cpu",
                 "model": {
-                    "name": "bdh_transformer",
+                    "name": "gpt_model",
                     "params": {
                         "vocab_size": "auto",
                         "context_length": 128,
@@ -206,7 +206,8 @@ class TrainingEnvironmentTests(unittest.TestCase):
             self.assertEqual(tokens[81], SUDOKU_SEPARATOR_TOKEN)
             self.assertEqual(len(tokens), 85)
 
-    def test_short_training_creates_checkpoints_and_logs(self) -> None:
+
+    def test_trainer_progress_bar_and_resume(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             data_path = root / "input.txt"
@@ -216,7 +217,7 @@ class TrainingEnvironmentTests(unittest.TestCase):
                 "seed": 7,
                 "device": "cpu",
                 "model": {
-                    "name": "bdh_transformer",
+                    "name": "gpt_model",
                     "params": {
                         "vocab_size": "auto",
                         "context_length": 8,
@@ -283,7 +284,7 @@ class TrainingEnvironmentTests(unittest.TestCase):
                         "runs_dir": str(root / "runs"),
                         "device": "cpu",
                         "model": {
-                            "name": "bdh_transformer",
+                            "name": "gpt_model",
                             "params": {
                                 "vocab_size": "auto",
                                 "context_length": 8,
@@ -322,7 +323,7 @@ class TrainingEnvironmentTests(unittest.TestCase):
             config = {
                 "device": "cpu",
                 "model": {
-                    "name": "bdh_transformer",
+                    "name": "gpt_model",
                     "params": {
                         "vocab_size": "auto",
                         "context_length": 16,

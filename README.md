@@ -127,7 +127,7 @@ uv run python main.py train configs/tiny_stories.yaml \
   --set trainer.max_epochs=5
 ```
 
-The original BDH architecture is registered as `bdh`; the contextual-query recurrent reasoning architecture is registered as `bdh_cq`; and the configurable causal Transformer reference model is registered as `bdh_transformer`. Custom components can register themselves from Python modules listed in the YAML `plugins` list.
+The original BDH architecture is registered as `bdh`; the contextual-query recurrent reasoning architecture is registered as `bdh_cq`; and the configurable causal GPT reference model is registered as `gpt_model` (with `bdh_transformer` as alias). Custom components can register themselves from Python modules listed in the YAML `plugins` list.
 
 Run the tests with:
 

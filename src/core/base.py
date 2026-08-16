@@ -196,10 +196,26 @@ class BaseLogger(ABC):
     def on_epoch_end(self, trainer: BaseTrainer, epoch: int, metrics: Mapping[str, float]) -> None:
         pass
 
+    def on_train_batch_start(self, trainer: BaseTrainer, batch: Any, batch_idx: int) -> None:
+        pass
+
+    def on_train_batch_end(
+        self, trainer: BaseTrainer, batch: Any, batch_idx: int, output: Mapping[str, Any]
+    ) -> None:
+        pass
+
     def on_validation_start(self, trainer: BaseTrainer) -> None:
         pass
 
     def on_validation_end(self, trainer: BaseTrainer, metrics: Mapping[str, float]) -> None:
+        pass
+
+    def on_validation_batch_start(self, trainer: BaseTrainer, batch: Any, batch_idx: int) -> None:
+        pass
+
+    def on_validation_batch_end(
+        self, trainer: BaseTrainer, batch: Any, batch_idx: int, output: Mapping[str, Any]
+    ) -> None:
         pass
 
     @abstractmethod

@@ -502,10 +502,10 @@ class ConfiguredBDHCQ(BaseModel):
             latent_reasoning_steps=latent_reasoning_steps,
         )
 
-    def _compute_loss(
+    def _compute_loss_and_logits(
         self,
         batch: Mapping[str, torch.Tensor | int | str],
-    ) -> torch.Tensor:
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         demo_len = int(batch.get("demo_len", 0))
         latent_reasoning_steps = (
             int(batch["latent_reasoning_steps"])
@@ -526,9 +526,10 @@ class ConfiguredBDHCQ(BaseModel):
                 demo_len=demo_len,
                 latent_reasoning_steps=latent_reasoning_steps,
             )
-            return F.cross_entropy(
+            loss = F.cross_entropy(
                 logits.reshape(-1, logits.size(-1)), target_ids.reshape(-1)
             )
+            return loss, logits
 
         logits, intermediate_logits = self(
             batch["input_ids"],
@@ -544,17 +545,26 @@ class ConfiguredBDHCQ(BaseModel):
                     target_ids.reshape(-1),
                 )
                 loss = loss + w * step_loss
+        return loss, logits
+
+    def _compute_loss(
+        self,
+        batch: Mapping[str, torch.Tensor | int | str],
+    ) -> torch.Tensor:
+        loss, _ = self._compute_loss_and_logits(batch)
         return loss
 
     def training_step(
         self, batch: Mapping[str, torch.Tensor | int | str], batch_idx: int
     ) -> Mapping[str, torch.Tensor]:
-        return {"loss": self._compute_loss(batch)}
+        loss, logits = self._compute_loss_and_logits(batch)
+        return {"loss": loss, "logits": logits}
 
     def validation_step(
         self, batch: Mapping[str, torch.Tensor | int | str], batch_idx: int
     ) -> Mapping[str, torch.Tensor]:
-        return {"loss": self._compute_loss(batch)}
+        loss, logits = self._compute_loss_and_logits(batch)
+        return {"loss": loss, "logits": logits}
 
     def configure_optimizers(self) -> torch.optim.Optimizer:
         return torch.optim.AdamW(

@@ -158,7 +158,9 @@ class TorchTrainer(BaseTrainer):
                 self.optimizer.step()
                 self.optimizer.zero_grad(set_to_none=True)
             losses.append(metrics["loss"])
-            self.on_train_batch_end(batch, batch_idx, {key: value for key, value in metrics.items()})
+            output_dict = dict(output) if isinstance(output, Mapping) else {"loss": output}
+            output_dict.setdefault("loss", metrics["loss"])
+            self.on_train_batch_end(batch, batch_idx, output_dict)
             self.state.global_step += 1
             if self.state.global_step % self.log_every_n_steps == 0:
                 self.log_metrics({f"train/{key}": value for key, value in metrics.items()})
@@ -236,12 +238,12 @@ class TorchTrainer(BaseTrainer):
 
     def on_train_batch_start(self, batch: Any, batch_idx: int) -> None:
         self.model.on_train_batch_start(self, batch, batch_idx)
-        for component in self.callbacks:
+        for component in [*self.callbacks, *self.loggers]:
             component.on_train_batch_start(self, batch, batch_idx)
 
     def on_train_batch_end(self, batch: Any, batch_idx: int, output: Mapping[str, Any]) -> None:
         self.model.on_train_batch_end(self, batch, batch_idx, output)
-        for component in self.callbacks:
+        for component in [*self.callbacks, *self.loggers]:
             component.on_train_batch_end(self, batch, batch_idx, output)
 
     def on_validation_start(self) -> None:

@@ -65,7 +65,15 @@ def build_components(config: dict[str, Any], run_dir: Path):
         model_params["vocab_size"] = int(data.vocab_size)
     model = MODEL_REGISTRY.instantiate({"name": config["model"]["name"], "params": model_params})
     callbacks = [CALLBACK_REGISTRY.instantiate(item, run_dir=run_dir) for item in config["callbacks"]]
-    loggers = [LOGGER_REGISTRY.instantiate(item, run_dir=run_dir) for item in config["loggers"]]
+    is_verbose = bool(config.get("verbose") or config.get("trainer", {}).get("verbose"))
+    loggers = []
+    for item in config["loggers"]:
+        item_copy = dict(item)
+        if is_verbose and item_copy.get("name") == "terminal":
+            params = dict(item_copy.get("params", {}))
+            params.setdefault("verbose", True)
+            item_copy["params"] = params
+        loggers.append(LOGGER_REGISTRY.instantiate(item_copy, run_dir=run_dir))
     trainer_settings = dict(config["trainer"])
     trainer_name = trainer_settings.pop("name", "torch")
     trainer = TRAINER_REGISTRY.instantiate(

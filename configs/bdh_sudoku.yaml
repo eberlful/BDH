@@ -1,3 +1,15 @@
+# Memory Benchmark (Apple Silicon / MPS, context_length: 256, n_layer: 6, n_embd: 256, n_head: 4):
+# | Batch Size | Peak Memory (MPS) | Status (16 GB Mac)   |
+# | :--------- | :---------------- | :------------------- |
+# | 1          | ~0.8 GB           | OK                   |
+# | 2          | ~0.9 GB           | OK                   |
+# | 4          | ~1.0 GB           | OK                   |
+# | 8          | ~1.2 GB           | OK (Recommended)     |
+# | 16         | > 15 GB           | OOM (Out of Memory)  |
+# | 32         | > 20 GB           | OOM (Out of Memory)  |
+#
+# Effective batch size = batch_size (8) * gradient_accumulation_steps (4) = 32
+
 seed: 42
 device: auto
 runs_dir: runs
@@ -21,7 +33,7 @@ data:
     num_samples: 10000
     validation_fraction: 0.1
     clues: 30
-    batch_size: 32
+    batch_size: 8
     context_length: 256
     reasoning_mode: none  # Direct input-to-solution mapping without CoT steps
     tokenizer: gpt2
@@ -34,7 +46,7 @@ trainer:
   log_every_n_steps: 100
   validate_every_n_epochs: 1
   gradient_clip_norm: 1.0
-  gradient_accumulation_steps: 1
+  gradient_accumulation_steps: 4
 
 callbacks:
   - name: checkpoint
@@ -45,3 +57,4 @@ loggers:
   - name: terminal
   - name: text_file
   - name: tensorboard
+

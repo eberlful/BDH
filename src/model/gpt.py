@@ -90,7 +90,10 @@ class GPTModel(BaseModel):
         return {"loss": self._loss(logits, batch["target_ids"]), "logits": logits}
 
     def configure_optimizers(self) -> torch.optim.Optimizer:
-        return torch.optim.AdamW(self.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay)
+        eps = 1e-4 if any(p.dtype == torch.float16 for p in self.parameters()) else 1e-8
+        return torch.optim.AdamW(
+            self.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay, eps=eps
+        )
 
 
 BDHTransformer = GPTModel

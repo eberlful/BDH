@@ -56,6 +56,8 @@ class TorchTrainer(BaseTrainer):
         config: Mapping[str, Any] | None = None,
         run_dir: Path | None = None,
         device: str | torch.device = "auto",
+        dtype: str | torch.dtype = "float16",
+        mixed_precision: bool = False,
         max_epochs: int = 1,
         max_steps: int | None = None,
         log_every_n_steps: int = 10,
@@ -71,6 +73,16 @@ class TorchTrainer(BaseTrainer):
         self.loggers = loggers or []
         self.config = dict(config or {})
         self.device = self._resolve_device(device)
+        self.dtype = self._resolve_dtype(dtype)
+        self.mixed_precision = bool(mixed_precision)
+        self.scaler = torch.amp.GradScaler(
+            device=self.device.type,
+            enabled=bool(
+                self.mixed_precision
+                and self.dtype == torch.float16
+                and self.device.type in ("cuda", "mps", "cpu")
+            ),
+        )
         self.max_epochs = max_epochs
         self.max_steps = max_steps
         self.log_every_n_steps = max(1, log_every_n_steps)
@@ -92,13 +104,31 @@ class TorchTrainer(BaseTrainer):
             return torch.device("cuda" if torch.cuda.is_available() else "cpu")
         return torch.device(device)
 
+    @staticmethod
+    def _resolve_dtype(dtype: str | torch.dtype) -> torch.dtype:
+        if isinstance(dtype, torch.dtype):
+            return dtype
+        dtype_str = str(dtype).lower().strip()
+        if dtype_str in ("float16", "fp16", "torch.float16"):
+            return torch.float16
+        if dtype_str in ("bfloat16", "bf16", "torch.bfloat16"):
+            return torch.bfloat16
+        if dtype_str in ("float32", "fp32", "float", "torch.float32"):
+            return torch.float32
+        raise ValueError(
+            f"Unsupported dtype '{dtype}'. Supported dtypes are 'bfloat16', 'float16', 'float32'."
+        )
+
     def setup(self) -> None:
         if self._is_setup:
             return
         self.data_module.prepare_data()
         self.data_module.setup("fit")
         self.model.setup(self.data_module, self)
-        self.model.to(self.device)
+        if self.mixed_precision:
+            self.model.to(self.device)
+        else:
+            self.model.to(device=self.device, dtype=self.dtype)
         self.train_loader = self.data_module.train_dataloader()
         self.val_loader = self.data_module.val_dataloader()
         configured = self.model.configure_optimizers()
@@ -114,6 +144,10 @@ class TorchTrainer(BaseTrainer):
             raise TypeError("configure_optimizers() must return an optimizer or optimizer mapping.")
         if not isinstance(self.optimizer, torch.optim.Optimizer):
             raise TypeError("configure_optimizers() did not provide a valid optimizer.")
+        if not self.mixed_precision and self.dtype == torch.float16:
+            for group in self.optimizer.param_groups:
+                if "eps" in group and group["eps"] < 1e-5:
+                    group["eps"] = 1e-4
         self._is_setup = True
 
     def fit(self, checkpoint_path: Path | None = None) -> None:
@@ -140,22 +174,37 @@ class TorchTrainer(BaseTrainer):
                 break
             batch = _move_to_device(raw_batch, self.device)
             self.on_train_batch_start(batch, batch_idx)
-            output = self.model.training_step(batch, batch_idx)
+            if self.mixed_precision:
+                with torch.autocast(device_type=self.device.type, dtype=self.dtype, enabled=True):
+                    output = self.model.training_step(batch, batch_idx)
+            else:
+                output = self.model.training_step(batch, batch_idx)
             metrics = _as_metrics(output)
             if "loss" not in metrics:
                 raise ValueError("training_step() must return a loss metric.")
             loss = output["loss"] if isinstance(output, Mapping) else output
             if not isinstance(loss, torch.Tensor):
                 raise TypeError("The training loss must be a torch.Tensor.")
-            (loss / self.gradient_accumulation_steps).backward()
+            scaled_loss = loss / self.gradient_accumulation_steps
+            if self.scaler.is_enabled():
+                self.scaler.scale(scaled_loss).backward()
+            else:
+                scaled_loss.backward()
             should_step = (
                 (batch_idx + 1) % self.gradient_accumulation_steps == 0
                 or batch_idx + 1 == len(self.train_loader)
             )
             if should_step:
-                if self.gradient_clip_norm is not None:
-                    nn.utils.clip_grad_norm_(self.model.parameters(), self.gradient_clip_norm)
-                self.optimizer.step()
+                if self.scaler.is_enabled():
+                    if self.gradient_clip_norm is not None:
+                        self.scaler.unscale_(self.optimizer)
+                        nn.utils.clip_grad_norm_(self.model.parameters(), self.gradient_clip_norm)
+                    self.scaler.step(self.optimizer)
+                    self.scaler.update()
+                else:
+                    if self.gradient_clip_norm is not None:
+                        nn.utils.clip_grad_norm_(self.model.parameters(), self.gradient_clip_norm)
+                    self.optimizer.step()
                 self.optimizer.zero_grad(set_to_none=True)
             losses.append(metrics["loss"])
             output_dict = dict(output) if isinstance(output, Mapping) else {"loss": output}
@@ -185,7 +234,11 @@ class TorchTrainer(BaseTrainer):
             for batch_idx, raw_batch in enumerate(self.val_loader):
                 batch = _move_to_device(raw_batch, self.device)
                 self._call_hook("on_validation_batch_start", batch, batch_idx)
-                output = self.model.validation_step(batch, batch_idx)
+                if self.mixed_precision:
+                    with torch.autocast(device_type=self.device.type, dtype=self.dtype, enabled=True):
+                        output = self.model.validation_step(batch, batch_idx)
+                else:
+                    output = self.model.validation_step(batch, batch_idx)
                 metrics = _as_metrics(output)
                 if "loss" in metrics:
                     losses.append(metrics["loss"])
@@ -263,6 +316,7 @@ class TorchTrainer(BaseTrainer):
             "model": self.model.state_dict(),
             "optimizer": self.optimizer.state_dict(),
             "scheduler": self.scheduler.state_dict() if self.scheduler is not None else None,
+            "scaler": self.scaler.state_dict() if self.scaler.is_enabled() else None,
             "state": {
                 "epoch": self.state.epoch,
                 "global_step": self.state.global_step,
@@ -284,6 +338,8 @@ class TorchTrainer(BaseTrainer):
         self.optimizer.load_state_dict(checkpoint["optimizer"])
         if self.scheduler is not None and checkpoint.get("scheduler") is not None:
             self.scheduler.load_state_dict(checkpoint["scheduler"])
+        if self.scaler.is_enabled() and checkpoint.get("scaler") is not None:
+            self.scaler.load_state_dict(checkpoint["scaler"])
         state = checkpoint.get("state", {})
         self.state = TrainingState(
             epoch=int(state.get("epoch", 0)),

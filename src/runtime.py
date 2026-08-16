@@ -76,6 +76,8 @@ def build_components(config: dict[str, Any], run_dir: Path):
         loggers.append(LOGGER_REGISTRY.instantiate(item_copy, run_dir=run_dir))
     trainer_settings = dict(config["trainer"])
     trainer_name = trainer_settings.pop("name", "torch")
+    dtype = trainer_settings.pop("dtype", config.get("dtype", "float16"))
+    mixed_precision = trainer_settings.pop("mixed_precision", config.get("mixed_precision", False))
     trainer = TRAINER_REGISTRY.instantiate(
         {"name": trainer_name, "params": trainer_settings},
         model=model,
@@ -85,6 +87,8 @@ def build_components(config: dict[str, Any], run_dir: Path):
         config=config,
         run_dir=run_dir,
         device=config.get("device", "auto"),
+        dtype=dtype,
+        mixed_precision=mixed_precision,
     )
     return trainer
 

@@ -22,6 +22,8 @@ from .registry import (
 DEFAULT_CONFIG: dict[str, Any] = {
     "seed": 42,
     "device": "auto",
+    "dtype": "float16",
+    "mixed_precision": False,
     "runs_dir": "runs",
     "plugins": [],
     "trainer": {
@@ -32,6 +34,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "validate_every_n_epochs": 1,
         "gradient_clip_norm": None,
         "gradient_accumulation_steps": 1,
+        "dtype": "float16",
+        "mixed_precision": False,
     },
     "callbacks": [{"name": "checkpoint", "params": {"save_best": True}}],
     "loggers": ["terminal", "text_file", "tensorboard"],
@@ -41,6 +45,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
 _ROOT_KEYS = {
     "seed",
     "device",
+    "dtype",
+    "mixed_precision",
     "runs_dir",
     "plugins",
     "trainer",
@@ -120,6 +126,20 @@ def normalize_config(config: dict[str, Any]) -> None:
             else:
                 raise TypeError(f"Every {section} entry must be a string or mapping.")
         config[section] = normalized
+
+    valid_dtypes = {"float16", "fp16", "bfloat16", "bf16", "float32", "fp32", "float"}
+    dtype = config.get("dtype")
+    if dtype is not None:
+        if not isinstance(dtype, str) or dtype.lower() not in valid_dtypes:
+            raise ValueError(
+                f"Invalid dtype '{dtype}'. Expected one of 'bfloat16', 'float16', 'float32'."
+            )
+    trainer_dtype = trainer.get("dtype")
+    if trainer_dtype is not None:
+        if not isinstance(trainer_dtype, str) or trainer_dtype.lower() not in valid_dtypes:
+            raise ValueError(
+                f"Invalid trainer.dtype '{trainer_dtype}'. Expected one of 'bfloat16', 'float16', 'float32'."
+            )
 
 
 def apply_overrides(config: dict[str, Any], overrides: list[str]) -> None:

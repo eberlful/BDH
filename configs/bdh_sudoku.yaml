@@ -12,6 +12,8 @@
 
 seed: 42
 device: auto
+dtype: float16
+mixed_precision: false
 runs_dir: runs
 verbose: false
 
@@ -26,7 +28,7 @@ model:
     dropout: 0.1
     learning_rate: 0.0003
     weight_decay: 0.1
-
+    mlp_internal_dim_multiplier: 32  # default 128
 data:
   name: sudoku_cot
   params:

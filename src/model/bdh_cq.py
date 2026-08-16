@@ -78,18 +78,18 @@ class Attention(nn.Module):
         return (v * phases_cos).to(v.dtype) + (v_rot * phases_sin).to(v.dtype)
 
     def forward(self, Q: torch.Tensor, K: torch.Tensor, V: torch.Tensor) -> torch.Tensor:
-        assert self.freqs.dtype == torch.float32
         assert K is Q
         _, _, T, _ = Q.size()
 
+        freqs = self.freqs.float()
         r_phases = (
             torch.arange(
                 0,
                 T,
-                device=self.freqs.device,
-                dtype=self.freqs.dtype,
+                device=freqs.device,
+                dtype=torch.float32,
             ).view(1, 1, -1, 1)
-        ) * self.freqs
+        ) * freqs
         QR = self.rope(r_phases, Q)
         KR = QR
 
@@ -567,6 +567,7 @@ class ConfiguredBDHCQ(BaseModel):
         return {"loss": loss, "logits": logits}
 
     def configure_optimizers(self) -> torch.optim.Optimizer:
+        eps = 1e-4 if any(p.dtype == torch.float16 for p in self.parameters()) else 1e-8
         return torch.optim.AdamW(
-            self.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay
+            self.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay, eps=eps
         )

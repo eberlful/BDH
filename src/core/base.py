@@ -32,6 +32,7 @@ class BaseModel(nn.Module, ABC):
         max_new_tokens: int,
         temperature: float = 1.0,
         top_k: int | None = None,
+        eos_token_id: int | list[int] | set[int] | None = None,
     ) -> torch.Tensor:
         """Autoregressively sample tokens from a causal language model."""
         if input_ids.ndim != 2:
@@ -62,6 +63,13 @@ class BaseModel(nn.Module, ABC):
             probs = F.softmax(logits, dim=-1)
             next_token = torch.multinomial(probs, num_samples=1)
             input_ids = torch.cat((input_ids, next_token), dim=1)
+            if eos_token_id is not None:
+                if isinstance(eos_token_id, int):
+                    if (next_token == eos_token_id).all():
+                        break
+                elif isinstance(eos_token_id, (list, tuple, set)):
+                    if all(t.item() in eos_token_id for t in next_token.view(-1)):
+                        break
         return input_ids
 
     def training_step(self, batch: Any, batch_idx: int) -> Mapping[str, Any] | torch.Tensor:

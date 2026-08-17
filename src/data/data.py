@@ -223,6 +223,7 @@ class TinyShakespeareDataModule(BaseDataModule):
                 "need to be downloaded once before an offline run."
             ) from exc
         self.vocab_size = self.tokenizer.n_vocab
+        self.eos_token_id: int = self.tokenizer.encode("<|endoftext|>", allowed_special={"<|endoftext|>"})[0]
         self.train_dataset: TokenBlockDataset | None = None
         self.val_dataset: TokenBlockDataset | None = None
 

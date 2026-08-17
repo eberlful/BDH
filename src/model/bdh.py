@@ -161,6 +161,7 @@ class BDH(nn.Module):
         max_new_tokens: int,
         temperature: float = 1.0,
         top_k: int | None = None,
+        eos_token_id: int | list[int] | set[int] | None = None,
     ) -> torch.Tensor:
         for _ in range(max_new_tokens):
             idx_cond = idx
@@ -172,6 +173,13 @@ class BDH(nn.Module):
             probs = F.softmax(logits, dim=-1)
             idx_next = torch.multinomial(probs, num_samples=1)
             idx = torch.cat((idx, idx_next), dim=1)
+            if eos_token_id is not None:
+                if isinstance(eos_token_id, int):
+                    if (idx_next == eos_token_id).all():
+                        break
+                elif isinstance(eos_token_id, (list, tuple, set)):
+                    if all(t.item() in eos_token_id for t in idx_next.view(-1)):
+                        break
         return idx
 
 

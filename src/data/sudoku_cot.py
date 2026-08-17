@@ -263,6 +263,7 @@ class SudokuCoTDataModule(BaseDataModule):
             raise ValueError(f"Could not load tokenizer {tokenizer!r}.") from exc
 
         self.vocab_size = getattr(self.tokenizer, "n_vocab", 50257)
+        self.eos_token_id: int = self.tokenizer.encode("<|endoftext|>", allowed_special={"<|endoftext|>"})[0]
         self.train_dataset: SudokuCoTDataset | None = None
         self.val_dataset: SudokuCoTDataset | None = None
 

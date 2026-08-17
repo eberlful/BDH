@@ -100,6 +100,7 @@ def run_generate(run_dir: Path, prompt: str, max_tokens: int) -> int:
     config = _validate_and_load(config_path, [])
     trainer = build_components(config, run_dir)
     trainer.setup()
+    eos_token_id: int | None = None
     if config["data"]["name"] == "sudoku":
         token_ids = encode_sudoku_prompt(prompt)
     elif config["data"]["name"] == "sudoku_cot":
@@ -118,6 +119,14 @@ def run_generate(run_dir: Path, prompt: str, max_tokens: int) -> int:
         token_ids = tokenizer.encode(prompt, allowed_special={"<|endoftext|>"})
         if not token_ids:
             raise ValueError("Prompt must contain at least one token.")
+        eos_token_id = getattr(trainer.data_module, "eos_token_id", None)
+        if eos_token_id is None:
+            try:
+                eos_encoded = tokenizer.encode("<|endoftext|>", allowed_special={"<|endoftext|>"})
+                if eos_encoded:
+                    eos_token_id = eos_encoded[0]
+            except Exception:
+                pass
     else:
         tokenizer = getattr(trainer.data_module, "tokenizer", None)
         if tokenizer is None or not callable(getattr(tokenizer, "encode", None)) or not callable(
@@ -127,12 +136,22 @@ def run_generate(run_dir: Path, prompt: str, max_tokens: int) -> int:
         token_ids = tokenizer.encode(prompt, allowed_special={"<|endoftext|>"})
         if not token_ids:
             raise ValueError("Prompt must contain at least one token.")
+        eos_token_id = getattr(trainer.data_module, "eos_token_id", None)
+        if eos_token_id is None:
+            try:
+                eos_encoded = tokenizer.encode("<|endoftext|>", allowed_special={"<|endoftext|>"})
+                if eos_encoded:
+                    eos_token_id = eos_encoded[0]
+            except Exception:
+                pass
 
     input_ids = torch.tensor([token_ids], dtype=torch.long, device=trainer.device)
     trainer.restore_checkpoint(checkpoint_path)
     trainer.model.eval()
     with torch.inference_mode():
-        generated = trainer.model.generate(input_ids, max_new_tokens=max_tokens)
+        generated = trainer.model.generate(
+            input_ids, max_new_tokens=max_tokens, eos_token_id=eos_token_id
+        )
     if config["data"]["name"] == "sudoku":
         print(" ".join(str(token) for token in generated[0].tolist()))
     else:

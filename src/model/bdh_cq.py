@@ -346,6 +346,7 @@ class BDHCQ(nn.Module):
         demo_len: int = 0,
         contextual_memory: list[torch.Tensor] | None = None,
         latent_reasoning_steps: int | None = None,
+        eos_token_id: int | list[int] | set[int] | None = None,
     ) -> torch.Tensor:
         prefix_demo = None
         if contextual_memory is None and demo_len > 0:
@@ -367,6 +368,13 @@ class BDHCQ(nn.Module):
             probs = F.softmax(logits, dim=-1)
             idx_next = torch.multinomial(probs, num_samples=1)
             idx = torch.cat((idx, idx_next), dim=1)
+            if eos_token_id is not None:
+                if isinstance(eos_token_id, int):
+                    if (idx_next == eos_token_id).all():
+                        break
+                elif isinstance(eos_token_id, (list, tuple, set)):
+                    if all(t.item() in eos_token_id for t in idx_next.view(-1)):
+                        break
 
         if prefix_demo is not None:
             idx = torch.cat((prefix_demo, idx), dim=1)
@@ -479,6 +487,7 @@ class ConfiguredBDHCQ(BaseModel):
         demo_len: int = 0,
         contextual_memory: list[torch.Tensor] | None = None,
         latent_reasoning_steps: int | None = None,
+        eos_token_id: int | list[int] | set[int] | None = None,
     ) -> torch.Tensor:
         if input_ids.ndim != 2:
             raise ValueError("input_ids must have shape [batch, sequence].")
@@ -500,6 +509,7 @@ class ConfiguredBDHCQ(BaseModel):
             demo_len=demo_len,
             contextual_memory=contextual_memory,
             latent_reasoning_steps=latent_reasoning_steps,
+            eos_token_id=eos_token_id,
         )
 
     def _compute_loss_and_logits(

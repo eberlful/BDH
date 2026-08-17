@@ -359,6 +359,27 @@ class TrainingEnvironmentTests(unittest.TestCase):
             self.assertTrue(generated_text.startswith("hello"))
             self.assertNotEqual(generated_text, "hello")
 
+    def test_generate_stops_on_eos_token(self) -> None:
+        model = GPTModel(vocab_size=10, context_length=16, d_model=16, n_heads=4, n_layers=1)
+        prompt = torch.tensor([[1, 2, 3]], dtype=torch.long)
+        
+        # Test BaseModel.generate with eos_token_id:
+        # Mock forward to return logits that heavily favor token 5
+        def mock_forward(idx: torch.Tensor) -> torch.Tensor:
+            logits = torch.zeros(idx.size(0), idx.size(1), 10)
+            logits[:, :, 5] = 100.0
+            return logits
+
+        original_forward = model.forward
+        try:
+            model.forward = mock_forward
+            # When requesting 10 new tokens but eos_token_id is 5, it should stop after 1 step
+            out = model.generate(prompt, max_new_tokens=10, eos_token_id=5)
+            self.assertEqual(out.shape, (1, 4))
+            self.assertEqual(out[0, -1].item(), 5)
+        finally:
+            model.forward = original_forward
+
     def test_generate_rejects_invalid_inputs(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             run_dir = Path(directory) / "run"
@@ -373,3 +394,4 @@ class TrainingEnvironmentTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

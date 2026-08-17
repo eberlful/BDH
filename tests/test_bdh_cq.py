@@ -421,6 +421,22 @@ class TestBDHCQArchitecture(unittest.TestCase):
         )
         self.assertEqual(generated_demo.shape, (1, 12))
 
+        # Generation with eos_token_id stopping early
+        def mock_generate_step(idx, *args, **kwargs):
+            B, T = idx.shape
+            logits = torch.zeros(B, T, 32)
+            logits[:, :, 7] = 100.0
+            return logits, None
+
+        original_forward = model.network.forward
+        try:
+            model.network.forward = mock_generate_step
+            generated_eos = model.generate(prompt, max_new_tokens=10, eos_token_id=7)
+            self.assertEqual(generated_eos.shape, (1, 5))
+            self.assertEqual(generated_eos[0, -1].item(), 7)
+        finally:
+            model.network.forward = original_forward
+
 
     def test_loss_schedule_configuration_and_validation(self):
         # Default loss schedule is "ramp"

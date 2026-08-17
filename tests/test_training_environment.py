@@ -255,13 +255,13 @@ class TrainingEnvironmentTests(unittest.TestCase):
             self.assertTrue((run_dir / "checkpoints" / "best.pt").exists())
             self.assertTrue((run_dir / "training.log").exists())
             terminal_logger = next(logger for logger in trainer.loggers if logger.__class__.__name__ == "TerminalLogger")
-            self.assertIsNotNone(terminal_logger.progress)
-            self.assertIsNotNone(terminal_logger.epoch_task_id)
-            task = terminal_logger.progress.tasks[terminal_logger.epoch_task_id]
-            self.assertEqual(task.completed, 1)
-            self.assertEqual(task.total, 1)
-            self.assertIn("train/loss=", task.fields["metrics"])
-            self.assertIn("remaining", terminal_logger.progress.columns[3].text_format)
+            self.assertEqual(terminal_logger.completed_epochs, 1)
+            self.assertEqual(terminal_logger.total_epochs, 1)
+            terminal_log_file = run_dir / "terminal.log"
+            self.assertTrue(terminal_log_file.exists())
+            log_text = terminal_log_file.read_text(encoding="utf-8")
+            self.assertIn("Starting Training", log_text)
+            self.assertIn("Epoch 1 Summary", log_text)
 
             resumed = build_components(config, run_dir)
             resumed.fit(run_dir / "checkpoints" / "last.pt")
@@ -269,8 +269,7 @@ class TrainingEnvironmentTests(unittest.TestCase):
             resumed_terminal_logger = next(
                 logger for logger in resumed.loggers if logger.__class__.__name__ == "TerminalLogger"
             )
-            resumed_task = resumed_terminal_logger.progress.tasks[resumed_terminal_logger.epoch_task_id]
-            self.assertEqual(resumed_task.completed, 1)
+            self.assertEqual(resumed_terminal_logger.completed_epochs, 1)
 
     def test_cli_train_validate_and_resume(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

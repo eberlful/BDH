@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
@@ -11,8 +12,7 @@ import torch
 from rich.console import Console
 from rich.markup import escape
 from rich.panel import Panel
-from rich.progress import BarColumn, Progress, TaskProgressColumn, TextColumn
-from rich.table import Table
+from rich.rule import Rule
 from torch.utils.tensorboard import SummaryWriter
 
 from ..core.base import BaseLogger, BaseTrainer
@@ -27,6 +27,24 @@ def _scalar_metrics(metrics: Mapping[str, Any]) -> dict[str, float]:
         if isinstance(value, (int, float)):
             result[key] = float(value)
     return result
+
+
+def _format_time(seconds: float) -> str:
+    if seconds < 0:
+        return "--:--"
+    total_seconds = int(seconds)
+    hours = total_seconds // 3600
+    minutes = (total_seconds % 3600) // 60
+    secs = total_seconds % 60
+    if hours > 0:
+        return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+    return f"{minutes:02d}:{secs:02d}"
+
+
+def _format_metric_val(value: float) -> str:
+    if abs(value) >= 1e4 or (0 < abs(value) < 1e-3):
+        return f"{value:.2e}"
+    return f"{value:.4f}"
 
 
 def _decode_tokens(tokens: list[int] | torch.Tensor, data_module: Any = None) -> str:
@@ -73,61 +91,108 @@ class TerminalLogger(BaseLogger):
         run_dir: Path | None = None,
         verbose: bool = False,
         max_display_length: int = 500,
+        filename: str | None = "terminal.log",
         **kwargs: Any,
     ) -> None:
         super().__init__(run_dir, **kwargs)
         self.console = Console()
-        self.progress: Progress | None = None
-        self.epoch_task_id: int | None = None
         self.verbose = verbose
         self.max_display_length = max_display_length
+        self.filename = filename
+        self.file_handle: Any = None
+        self.file_console: Console | None = None
+
+        # Lifecycle and timing state
+        self.total_epochs: int = 0
+        self.completed_epochs: int = 0
+        self.total_steps: int | None = None
+        self.train_start_time: float | None = None
+        self.epoch_start_time: float | None = None
+        self.last_step_time: float | None = None
+        self.last_step: int = 0
+
+        if self.run_dir is not None and self.filename:
+            self.run_dir.mkdir(parents=True, exist_ok=True)
+            self.file_handle = (self.run_dir / self.filename).open("a", encoding="utf-8")
+            self.file_console = Console(
+                file=self.file_handle,
+                force_terminal=False,
+                width=120,
+                no_color=True,
+                highlight=False,
+            )
+
+    def _print(self, *renderables: Any, **kwargs: Any) -> None:
+        self.console.print(*renderables, **kwargs)
+        if self.file_console is not None:
+            self.file_console.print(*renderables, **kwargs)
+            if self.file_handle is not None:
+                self.file_handle.flush()
 
     def log_hyperparameters(self, parameters: Mapping[str, Any]) -> None:
-        self.console.print(f"[bold green]Run directory:[/bold green] {self.run_dir}")
+        self._print(f"[bold cyan]Run directory:[/bold cyan] {self.run_dir}")
         if self.verbose:
-            self.console.print(
+            self._print(
                 "[bold yellow]Verbose logging enabled:[/bold yellow] "
                 "displaying training data and model predictions"
             )
 
     def on_train_start(self, trainer: BaseTrainer) -> None:
-        total_epochs = max(0, int(getattr(trainer, "max_epochs", 0)))
-        completed_epochs = min(total_epochs, max(0, int(getattr(trainer.state, "epoch", 0))))
-        self.progress = Progress(
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            TaskProgressColumn(),
-            TextColumn("remaining: {task.fields[remaining]}"),
-            TextColumn("{task.fields[metrics]}"),
-            console=self.console,
-        )
-        self.progress.start()
-        self.epoch_task_id = self.progress.add_task(
-            "Epochs",
-            total=total_epochs,
-            completed=completed_epochs,
-            remaining=total_epochs - completed_epochs,
-            metrics="",
-        )
+        self.total_epochs = max(0, int(getattr(trainer, "max_epochs", 0)))
+        self.completed_epochs = min(self.total_epochs, max(0, int(getattr(trainer.state, "epoch", 0))))
+        self.total_steps = getattr(trainer, "max_steps", None)
+        if self.total_steps is None and hasattr(trainer, "train_loader") and trainer.train_loader is not None:
+            try:
+                self.total_steps = len(trainer.train_loader) * self.total_epochs
+            except (TypeError, AttributeError):
+                self.total_steps = None
+
+        self.train_start_time = time.time()
+        self.last_step_time = time.time()
+        self.last_step = getattr(trainer.state, "global_step", 0)
+
+        self._print(Rule(title="[bold green]Starting Training[/bold green]", characters="━", style="green"))
+
+    def on_epoch_start(self, trainer: BaseTrainer, epoch: int) -> None:
+        self.epoch_start_time = time.time()
+        total_ep = self.total_epochs or (epoch + 1)
+        self._print(Rule(title=f"[bold cyan]Epoch {epoch + 1}/{total_ep}[/bold cyan]", characters="━", style="cyan"))
 
     def on_epoch_end(self, trainer: BaseTrainer, epoch: int, metrics: Mapping[str, float]) -> None:
-        if self.progress is None or self.epoch_task_id is None:
-            return
-        completed_epochs = min(self.progress.tasks[self.epoch_task_id].total, trainer.state.epoch)
-        remaining = max(0, int(self.progress.tasks[self.epoch_task_id].total - completed_epochs))
-        metric_text = " ".join(
-            f"{key}={value:.4f}" for key, value in _scalar_metrics(metrics).items()
+        self.completed_epochs = epoch + 1
+        elapsed = time.time() - (self.epoch_start_time or time.time())
+        now_str = datetime.now().strftime("%H:%M:%S")
+        total_ep = self.total_epochs or (epoch + 1)
+
+        scalar_dict = _scalar_metrics(metrics)
+        metric_parts = [
+            f"[dim]{key}:[/dim] [bold]{_format_metric_val(value)}[/bold]"
+            for key, value in scalar_dict.items()
+        ]
+        metric_text = " │ ".join(metric_parts) if metric_parts else ""
+
+        self._print(
+            Rule(
+                title=f"[bold green]✦ Epoch {epoch + 1} Summary[/bold green]",
+                characters="─",
+                style="green",
+            )
         )
-        self.progress.update(
-            self.epoch_task_id,
-            completed=completed_epochs,
-            remaining=remaining,
-            metrics=metric_text,
+        summary_line = (
+            f"[dim cyan][{now_str}][/dim cyan] [bold green]Epoch {epoch + 1} completed[/bold green] "
+            f"in {_format_time(elapsed)}"
         )
+        if metric_text:
+            summary_line += f" │ {metric_text}"
+        self._print(summary_line)
 
     def on_train_end(self, trainer: BaseTrainer) -> None:
-        if self.progress is not None:
-            self.progress.stop()
+        total_elapsed = time.time() - (self.train_start_time or time.time())
+        now_str = datetime.now().strftime("%H:%M:%S")
+        self._print(Rule(title="[bold green]✔ Training Complete[/bold green]", characters="━", style="green"))
+        self._print(
+            f"[dim cyan][{now_str}][/dim cyan] Finished {self.completed_epochs} epoch(s) in {_format_time(total_elapsed)}."
+        )
 
     def on_train_batch_end(
         self, trainer: BaseTrainer, batch: Any, batch_idx: int, output: Mapping[str, Any]
@@ -204,16 +269,62 @@ class TerminalLogger(BaseLogger):
             title=f"[bold magenta]Step {step} | Epoch {epoch_num} Training Sample[/bold magenta]",
             border_style="blue",
         )
-        self.console.print(panel)
+        self._print(panel)
 
     def log_metrics(self, metrics: Mapping[str, float], step: int) -> None:
-        table = Table(show_header=False, box=None, padding=(0, 1))
-        table.add_column(style="cyan")
-        table.add_column(style="white")
-        table.add_row("step", str(step))
-        for key, value in _scalar_metrics(metrics).items():
-            table.add_row(key, f"{value:.6f}")
-        self.console.print(table)
+        now = time.time()
+        now_str = datetime.now().strftime("%H:%M:%S")
+
+        # Step string
+        if self.total_steps:
+            step_str = f"Step {step:>5d}/{self.total_steps}"
+        else:
+            step_str = f"Step {step:>5d}"
+
+        # Speed calculation
+        speed_str = ""
+        eta_str = ""
+        if self.last_step_time is not None and step > self.last_step:
+            dt = now - self.last_step_time
+            d_step = step - self.last_step
+            if dt > 0:
+                step_rate = d_step / dt
+                speed_str = f"{step_rate:.1f} step/s"
+                if self.total_steps and step < self.total_steps:
+                    remaining_steps = self.total_steps - step
+                    eta_sec = remaining_steps / step_rate
+                    eta_str = f"ETA: {_format_time(eta_sec)}"
+            self.last_step_time = now
+            self.last_step = step
+
+        # Scalar metrics formatting
+        scalar_dict = _scalar_metrics(metrics)
+        metric_parts: list[str] = []
+        for key, value in scalar_dict.items():
+            formatted_val = _format_metric_val(value)
+            metric_parts.append(f"[dim]{key}:[/dim] [bold]{formatted_val}[/bold]")
+
+        parts = [f"[dim cyan][{now_str}][/dim cyan]", f"[bold white]{step_str}[/bold white]"]
+        if metric_parts:
+            parts.append(" │ ".join(metric_parts))
+        if speed_str:
+            parts.append(f"[dim]{speed_str}[/dim]")
+        if eta_str:
+            parts.append(f"[dim green]{eta_str}[/dim green]")
+
+        line = " │ ".join(parts)
+        self._print(line)
+
+    def flush(self) -> None:
+        if self.file_handle is not None and not getattr(self.file_handle, "closed", True):
+            self.file_handle.flush()
+
+    def close(self) -> None:
+        if self.file_handle is not None and not getattr(self.file_handle, "closed", True):
+            self.file_handle.close()
+
+    def __del__(self) -> None:
+        self.close()
 
 
 @LOGGER_REGISTRY.register("text_file")

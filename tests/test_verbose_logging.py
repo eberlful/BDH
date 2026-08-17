@@ -94,6 +94,7 @@ class TestVerboseLogging(unittest.TestCase):
             self.assertIn("target text", printed)
             self.assertIn("Predicted Model Output:", printed)
             self.assertIn("prediction!!", printed)
+            logger.close()
 
     def test_terminal_logger_truncation(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -119,6 +120,7 @@ class TestVerboseLogging(unittest.TestCase):
 
             printed = capture.getvalue()
             self.assertIn("[truncated, total 100 chars]", printed)
+            logger.close()
 
     def test_verbose_training_end_to_end_tiny_shakespeare(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -273,6 +275,37 @@ class TestVerboseLogging(unittest.TestCase):
             self.assertIn("Input Data:", printed)
             self.assertIn("Target Data:", printed)
             self.assertIn("Predicted Model Output:", printed)
+
+            # Verify terminal.log was created and mirrored output
+            terminal_log_file = run_dir / "terminal.log"
+            self.assertTrue(terminal_log_file.exists())
+            log_content = terminal_log_file.read_text(encoding="utf-8")
+            self.assertIn("Run directory:", log_content)
+            self.assertIn("Starting Training", log_content)
+            self.assertIn("Input Data:", log_content)
+            self.assertIn("Target Data:", log_content)
+            self.assertIn("Predicted Model Output:", log_content)
+            self.assertIn("Epoch 1 Summary", log_content)
+            self.assertIn("Training Complete", log_content)
+
+    def test_terminal_logger_custom_filename_and_disabled(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory)
+            logger_custom = TerminalLogger(run_dir=run_dir, filename="custom.log")
+            logger_custom.log_hyperparameters({})
+            logger_custom.log_metrics({"train/loss": 1.23}, step=1)
+            logger_custom.close()
+
+            self.assertTrue((run_dir / "custom.log").exists())
+            content = (run_dir / "custom.log").read_text(encoding="utf-8")
+            self.assertIn("Step", content)
+            self.assertIn("1.23", content)
+
+            # Test disabled file mirroring when filename is None
+            logger_disabled = TerminalLogger(run_dir=run_dir, filename=None)
+            logger_disabled.log_hyperparameters({})
+            logger_disabled.close()
+            self.assertFalse((run_dir / "None").exists())
 
 
 if __name__ == "__main__":

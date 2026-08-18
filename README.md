@@ -170,6 +170,35 @@ uv run python main.py train configs/tiny_stories.yaml \
   --set trainer.max_epochs=5
 ```
 
+### Optimizer configuration (AdamW, Adafactor)
+
+Models support configurable optimizers via `model.params.optimizer` (default: `adamw`) and `model.params.optimizer_params`:
+
+- `adamw` (default): Standard decoupled weight-decay AdamW.
+- `adafactor`: Sublinear memory optimizer that factorizes 2D second-moment states into rank-1 row/column statistics ($O(d_1 + d_2)$ instead of $O(d_1 \cdot d_2)$), reducing optimizer state memory by 50% to 75% natively in PyTorch on Apple Silicon (MPS), CPU, and CUDA.
+
+Configure in YAML:
+
+```yaml
+model:
+  name: bdh_cq
+  params:
+    optimizer: adafactor # default is 'adamw'
+    learning_rate: 0.0003
+    weight_decay: 0.01
+    optimizer_params:
+      clip_threshold: 1.0
+      beta1: null # null/0.0 disables 1st momentum for maximum memory savings
+```
+
+Or override via CLI flags:
+
+```bash
+uv run python main.py train configs/bdh_cq.yaml \
+  --set model.params.optimizer=adafactor \
+  --set model.params.learning_rate=0.001
+```
+
 The original BDH architecture is registered as `bdh`; the contextual-query recurrent reasoning architecture is registered as `bdh_cq`; and the configurable causal GPT reference model is registered as `gpt_model` (with `bdh_transformer` as alias). Custom components can register themselves from Python modules listed in the YAML `plugins` list.
 
 Run the tests with:

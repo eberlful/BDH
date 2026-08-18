@@ -10,6 +10,7 @@ from torch.nn import functional as F
 
 from ..core.base import BaseModel
 from ..core.registry import MODEL_REGISTRY
+from ..optim import build_optimizer
 
 
 @dataclasses.dataclass
@@ -398,6 +399,8 @@ class ConfiguredBDHCQ(BaseModel):
         loss_schedule: str = "ramp",
         learning_rate: float = 3e-4,
         weight_decay: float = 0.1,
+        optimizer: str | dict[str, Any] = "adamw",
+        optimizer_params: dict[str, Any] | None = None,
     ) -> None:
         super().__init__()
         if vocab_size == "auto":
@@ -432,6 +435,8 @@ class ConfiguredBDHCQ(BaseModel):
         self.context_length = context_length
         self.learning_rate = learning_rate
         self.weight_decay = weight_decay
+        self.optimizer_name = optimizer
+        self.optimizer_params = optimizer_params
         self.loss_schedule = loss_schedule
         self.config = BDHCQConfig(
             n_layer=n_layer,
@@ -577,7 +582,12 @@ class ConfiguredBDHCQ(BaseModel):
         return {"loss": loss, "logits": logits}
 
     def configure_optimizers(self) -> torch.optim.Optimizer:
-        eps = 1e-4 if any(p.dtype == torch.float16 for p in self.parameters()) else 1e-8
-        return torch.optim.AdamW(
-            self.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay, eps=eps
+        has_fp16 = any(p.dtype == torch.float16 for p in self.parameters())
+        return build_optimizer(
+            self.parameters(),
+            optimizer=self.optimizer_name,
+            learning_rate=self.learning_rate,
+            weight_decay=self.weight_decay,
+            optimizer_params=self.optimizer_params,
+            dtype_has_fp16=has_fp16,
         )

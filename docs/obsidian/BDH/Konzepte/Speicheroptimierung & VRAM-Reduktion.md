@@ -105,7 +105,20 @@ $$V \approx \frac{R \cdot C^T}{\mathbf{1}^T R} \quad \text{mit } R \in \mathbb{R
 > [!note] Eigenschaften
 > - **Speicherreduktion**: Statt $d_1 \times d_2$ Werten werden nur $d_1 + d_2$ Werte gespeichert. Für eine $4096 \times 4096$ Matrix sinkt der Zustand von $16.7\text{ Mio. Floats}$ auf $8192\text{ Floats}$ (> 99 % Ersparnis für das 2. Moment).
 > - **Optional ohne 1. Moment**: Kann komplett ohne Momentum betrieben werden (Memory $\to 0$).
-> - **Nativ verfügbar**: In `transformers` und gängigen PyTorch-Bibliotheken out-of-the-box ohne Spezial-Kernel implementiert.
+> - **Nativ verfügbar**: Im BDH-Framework über `src/optim/adafactor.py` vollständig integriert.
+
+```yaml
+# Konfiguration in configs/*.yaml
+model:
+  name: bdh_cq
+  params:
+    optimizer: adafactor  # Standard ist 'adamw'
+    learning_rate: 0.0003
+    weight_decay: 0.01
+    optimizer_params:
+      clip_threshold: 1.0
+      beta1: null  # null spart zusätzlich 50% Momentum-Speicher
+```
 
 ---
 

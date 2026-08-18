@@ -46,6 +46,7 @@ data:
 
 trainer:
   name: torch
+  dtype: float32
   max_epochs: 10
   log_every_n_steps: 100
   validate_every_n_epochs: 1

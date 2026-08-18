@@ -282,12 +282,14 @@ class SudokuCoTDataModule(BaseDataModule):
             self.tokenizer,
             context_length=self.context_length,
             reasoning_mode=self.reasoning_mode,
+            pad_token_id=self.eos_token_id,
         )
         self.val_dataset = SudokuCoTDataset(
             val_samples,
             self.tokenizer,
             context_length=self.context_length,
             reasoning_mode=self.reasoning_mode,
+            pad_token_id=self.eos_token_id,
         )
 
     def train_dataloader(self) -> DataLoader[dict[str, torch.Tensor]]:

@@ -95,6 +95,23 @@ class SudokuCoTTests(unittest.TestCase):
         # The first token after the prompt should NOT be -100
         self.assertNotEqual(target_ids[prompt_len - 1].item(), -100)
 
+    def test_byte_tokenized_padding_stays_within_vocabulary(self) -> None:
+        data_module = SudokuCoTDataModule(
+            num_samples=2,
+            validation_fraction=0.5,
+            clues=30,
+            batch_size=1,
+            context_length=512,
+            reasoning_mode="none",
+            tokenizer="byte",
+        )
+        data_module.setup()
+        
+        item = data_module.train_dataset[0]
+        self.assertEqual(data_module.eos_token_id, 256)
+        self.assertLess(int(item["input_ids"].max()), data_module.vocab_size)
+        self.assertEqual(int(item["input_ids"].max()), data_module.eos_token_id)
+
     def test_model_training_step_with_cot_batch(self) -> None:
         tokenizer = tiktoken.get_encoding("gpt2")
         samples = [{"puzzle": self.sample_puzzle, "solution": self.sample_solution}]

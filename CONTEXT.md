@@ -36,3 +36,16 @@ _Avoid_: Thinking depth, recurrent unroll count
 The training regime of computing loss over intermediate latent reasoning steps in addition to the final step to stabilize gradient flow and trajectory convergence.
 _Avoid_: Layer-wise loss, intermediate penalty
 
+**Task Validator**:
+A domain-specific evaluation component executed during the validation phase to compute task-level metrics (e.g. accuracy, syntactic validity, constraint satisfaction) beyond raw token cross-entropy loss.
+_Avoid_: Test runner, score checker, metric callback
+
+**Generative Evaluation**:
+The process of autoregressively decoding completions from task prompts during validation to measure end-to-end task success and structural correctness.
+_Avoid_: Rollout test, generation scoring, free-form testing
+
+**Teacher-Forced Validation**:
+Evaluating next-token predictions and cross-entropy loss over ground-truth target token sequences without autoregressive generation.
+_Avoid_: Standard eval, non-generative test
+
+

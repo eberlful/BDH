@@ -60,7 +60,7 @@ graph TD
 - **[[Latenter Workspace & Deep Supervision]]**: Rekurrente Denkzyklen ($H_0 \to H_R$), Gradientenstabilität und Test-Time Compute Scaling.
 - **[[RoPE & Sparse Synaptic Gating]]**: Quantisierte Frequenzverteilungen, Rotary Position Embeddings und ReLU-Aktivierungssparsität.
 - **[[LayerNorm & Flaschenhals-Dynamik]]**: Verhinderung von Norm-Explosionen, Kalibrierung für ReLU-Gating (Denoising), Trainingsstabilität und parameterfreie Head-Normalisierung.
-- **[[Speicheroptimierung & VRAM-Reduktion]]**: Ursachen des VRAM-Bedarfs, empirische Benchmarks und TODOs/Roadmap für effizientes Training.
+- **[[Speicheroptimierung & VRAM-Reduktion]]**: Ursachen des VRAM-Bedarfs, detaillierte Analyse der 6 Optimierungsmethoden (8-Bit AdamW, Lion, Adafactor, Checkpointing, Mixed Precision, Gradient Accumulation) und Best Practices für 16 GB Apple Silicon.
 
 
 ---

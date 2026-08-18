@@ -17,7 +17,7 @@ from src.cli import build_parser, run_train
 from src.core.config import load_config, normalize_config, validate_config
 from src.data.data import SUDOKU_SEPARATOR_TOKEN, SudokuDataModule, _load_tokenizer
 from src.data.sudoku_cot import SudokuCoTDataModule
-from src.logging.loggers import TerminalLogger, _decode_tokens
+from src.logging.loggers import TerminalLogger, _decode_tokens, _format_device
 from src.runtime import build_components
 
 
@@ -306,6 +306,43 @@ class TestVerboseLogging(unittest.TestCase):
             logger_disabled.log_hyperparameters({})
             logger_disabled.close()
             self.assertFalse((run_dir / "None").exists())
+
+    def test_format_device(self) -> None:
+        self.assertEqual(_format_device(None), "unknown")
+        self.assertEqual(_format_device(torch.device("cpu")), "cpu")
+        self.assertEqual(_format_device("cpu"), "cpu")
+        self.assertEqual(_format_device(torch.device("mps")), "mps (Apple Silicon GPU)")
+        self.assertEqual(_format_device("mps"), "mps (Apple Silicon GPU)")
+
+    def test_terminal_logger_device_logging(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory)
+            logger = TerminalLogger(run_dir=run_dir, filename="terminal.log")
+
+            trainer = MagicMock()
+            trainer.device = torch.device("cpu")
+            trainer.max_epochs = 1
+            trainer.state.epoch = 0
+            trainer.state.global_step = 0
+            trainer.train_loader = None
+            trainer.max_steps = 1
+
+            capture = io.StringIO()
+            logger.console.file = capture
+
+            logger.on_train_start(trainer)
+            logger.log_hyperparameters({"device": "cpu"})
+            logger.close()
+
+            output = capture.getvalue()
+            self.assertIn("Device:", output)
+            self.assertIn("cpu", output)
+
+            log_file = run_dir / "terminal.log"
+            self.assertTrue(log_file.exists())
+            file_content = log_file.read_text(encoding="utf-8")
+            self.assertIn("Device:", file_content)
+            self.assertIn("cpu", file_content)
 
 
 if __name__ == "__main__":

@@ -84,6 +84,38 @@ def _decode_tokens(tokens: list[int] | torch.Tensor, data_module: Any = None) ->
     return " ".join(str(t) for t in token_list)
 
 
+def _format_device(device: torch.device | str | None) -> str:
+    if device is None:
+        return "unknown"
+    if isinstance(device, str):
+        if device == "auto":
+            if torch.cuda.is_available():
+                device = torch.device("cuda")
+            elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+                device = torch.device("mps")
+            else:
+                device = torch.device("cpu")
+        else:
+            try:
+                device = torch.device(device)
+            except Exception:
+                return str(device)
+
+    if isinstance(device, torch.device):
+        if device.type == "cuda" and torch.cuda.is_available():
+            try:
+                name = torch.cuda.get_device_name(device)
+                return f"{device} ({name})"
+            except Exception:
+                return str(device)
+        elif device.type == "mps":
+            return f"{device} (Apple Silicon GPU)"
+        elif device.type == "cpu":
+            return "cpu"
+        return str(device)
+    return str(device)
+
+
 @LOGGER_REGISTRY.register("terminal")
 class TerminalLogger(BaseLogger):
     def __init__(
@@ -101,6 +133,7 @@ class TerminalLogger(BaseLogger):
         self.filename = filename
         self.file_handle: Any = None
         self.file_console: Console | None = None
+        self.device: torch.device | str | None = None
 
         # Lifecycle and timing state
         self.total_epochs: int = 0
@@ -131,6 +164,9 @@ class TerminalLogger(BaseLogger):
 
     def log_hyperparameters(self, parameters: Mapping[str, Any]) -> None:
         self._print(f"[bold cyan]Run directory:[/bold cyan] {self.run_dir}")
+        device = self.device if self.device is not None else parameters.get("device")
+        if device is not None:
+            self._print(f"[bold cyan]Device:[/bold cyan] {_format_device(device)}")
         if self.verbose:
             self._print(
                 "[bold yellow]Verbose logging enabled:[/bold yellow] "
@@ -138,6 +174,7 @@ class TerminalLogger(BaseLogger):
             )
 
     def on_train_start(self, trainer: BaseTrainer) -> None:
+        self.device = getattr(trainer, "device", None)
         self.total_epochs = max(0, int(getattr(trainer, "max_epochs", 0)))
         self.completed_epochs = min(self.total_epochs, max(0, int(getattr(trainer.state, "epoch", 0))))
         self.total_steps = getattr(trainer, "max_steps", None)

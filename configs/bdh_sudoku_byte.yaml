@@ -9,7 +9,7 @@ mixed_precision: false
 runs_dir: runs
 verbose: false
 
-compile: "reduce-overhead" # options: "default" | "reduce-overhead" | "max-autotune" | False
+compile: false # options: "default" | "reduce-overhead" | "max-autotune" | False
 
 model:
   name: bdh
@@ -23,6 +23,12 @@ model:
     learning_rate: 0.0003
     weight_decay: 0.1
     mlp_internal_dim_multiplier: 32  # memory-efficient setting for 16GB Mac
+    # optimizer: adafactor # default is 'adamw'
+    # learning_rate: 0.0003
+    # weight_decay: 0.01
+    # optimizer_params:
+    # clip_threshold: 1.0
+    # beta1: null # null/0.0 disables 1st momentum for maximum memory savings
 
 data:
   name: sudoku_cot
@@ -30,7 +36,7 @@ data:
     num_samples: 10000
     validation_fraction: 0.1
     clues: 30
-    batch_size: 4
+    batch_size: 32
     context_length: 512
     reasoning_mode: none  # Direct input-to-solution mapping without CoT steps
     tokenizer: byte
@@ -40,7 +46,7 @@ data:
 trainer:
   name: torch
   dtype: float32
-  max_epochs: 10
+  max_epochs: 20
   log_every_n_steps: 100
   validate_every_n_epochs: 1
   gradient_clip_norm: 1.0
@@ -49,7 +55,8 @@ trainer:
 validator:
   name: sudoku
   params:
-    num_eval_samples: 32
+    num_eval_samples: 16
+    max_new_tokens: 180
 
 callbacks:
   - name: checkpoint

@@ -13,12 +13,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "Modelle/BDH-CQ - Contextual Query.md",
+                "file": "Konzepte/Speicheroptimierung & VRAM-Reduktion.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "BDH-CQ - Contextual Query"
+              "title": "Speicheroptimierung & VRAM-Reduktion"
             }
           }
         ]
@@ -206,6 +206,7 @@
   },
   "active": "ef77b66c2b4f169a",
   "lastOpenFiles": [
+    "Modelle/BDH-CQ - Contextual Query.md",
     "Konzepte/LayerNorm & Flaschenhals-Dynamik.md",
     "Welcome.md",
     "Konzepte/RoPE & Sparse Synaptic Gating.md",
@@ -214,7 +215,6 @@
     "Konzepte",
     "Modelle/Modellvergleich & Benchmarks.md",
     "Modelle/BDH Transformer Baseline.md",
-    "Modelle/BDH-CQ - Contextual Query.md",
     "Modelle/BDH - Baby Dragon Hatchling.md",
     "Modelle",
     "00 - Index & Übersicht.md"

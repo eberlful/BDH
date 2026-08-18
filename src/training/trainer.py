@@ -123,7 +123,11 @@ class TorchTrainer(BaseTrainer):
         if isinstance(device, torch.device):
             return device
         if device == "auto":
-            return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            if torch.cuda.is_available():
+                return torch.device("cuda")
+            if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+                return torch.device("mps")
+            return torch.device("cpu")
         return torch.device(device)
 
     @staticmethod
@@ -278,10 +282,6 @@ class TorchTrainer(BaseTrainer):
         for validator in self.validators:
             epoch_metrics = validator.on_validation_epoch_end(self)
             for k, v in epoch_metrics.items():
-                key = k if k.startswith("val/") else f"val/{k}"
-                result[key] = float(v)
-            val_metrics = validator.validate(self.model, self.data_module, trainer=self)
-            for k, v in val_metrics.items():
                 key = k if k.startswith("val/") else f"val/{k}"
                 result[key] = float(v)
         self.on_validation_end(result)

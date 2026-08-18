@@ -83,14 +83,18 @@ class CheckpointCallbackTests(unittest.TestCase):
             trainer = DummyTrainer(step_value=1, run_dir=run_dir)
             best_path = run_dir / "checkpoints" / "best.pt"
 
-            # Epoch 1: accuracy 0.5 -> saves best.pt (0.5 > -inf)
+            # Epoch 1: accuracy 0.5 -> saves best.pt (0.5 > -inf) and named best file
             trainer.step_value = 1
             cb.on_epoch_end(trainer, 0, {"val/sudoku_board_accuracy": 0.5})
             self.assertEqual(cb.best_metric, 0.5)
             self.assertTrue(best_path.exists())
+            named_best_ep1 = run_dir / "checkpoints" / "best_epoch-0001_val_sudoku_board_accuracy-0.5000.pt"
+            self.assertTrue(named_best_ep1.exists())
             loaded = torch.load(best_path, weights_only=False)
             self.assertEqual(loaded["step"], 1)
             self.assertEqual(loaded["callback_state"]["best_metric"], 0.5)
+            loaded_named = torch.load(named_best_ep1, weights_only=False)
+            self.assertEqual(loaded_named["step"], 1)
 
             # Epoch 2: accuracy 0.3 -> does NOT overwrite best.pt (0.3 < 0.5)
             trainer.step_value = 2
@@ -98,14 +102,20 @@ class CheckpointCallbackTests(unittest.TestCase):
             self.assertEqual(cb.best_metric, 0.5)
             loaded = torch.load(best_path, weights_only=False)
             self.assertEqual(loaded["step"], 1)
+            named_best_ep2 = run_dir / "checkpoints" / "best_epoch-0002_val_sudoku_board_accuracy-0.3000.pt"
+            self.assertFalse(named_best_ep2.exists())
 
-            # Epoch 3: accuracy 0.8 -> overwrites best.pt (0.8 > 0.5)
+            # Epoch 3: accuracy 0.8 -> overwrites best.pt (0.8 > 0.5) and creates named best file
             trainer.step_value = 3
             cb.on_epoch_end(trainer, 2, {"val/sudoku_board_accuracy": 0.8})
             self.assertEqual(cb.best_metric, 0.8)
             loaded = torch.load(best_path, weights_only=False)
             self.assertEqual(loaded["step"], 3)
             self.assertEqual(loaded["callback_state"]["best_metric"], 0.8)
+            named_best_ep3 = run_dir / "checkpoints" / "best_epoch-0003_val_sudoku_board_accuracy-0.8000.pt"
+            self.assertTrue(named_best_ep3.exists())
+            loaded_named_ep3 = torch.load(named_best_ep3, weights_only=False)
+            self.assertEqual(loaded_named_ep3["step"], 3)
 
     def test_minimization_checkpoint_saving(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -119,10 +129,12 @@ class CheckpointCallbackTests(unittest.TestCase):
             trainer = DummyTrainer(step_value=1, run_dir=run_dir)
             best_path = run_dir / "checkpoints" / "best.pt"
 
-            # Epoch 1: loss 2.0 -> saves best.pt (2.0 < inf)
+            # Epoch 1: loss 2.0 -> saves best.pt (2.0 < inf) and named file
             trainer.step_value = 1
             cb.on_epoch_end(trainer, 0, {"val/loss": 2.0})
             self.assertEqual(cb.best_metric, 2.0)
+            named_ep1 = run_dir / "checkpoints" / "best_epoch-0001_val_loss-2.0000.pt"
+            self.assertTrue(named_ep1.exists())
             loaded = torch.load(best_path, weights_only=False)
             self.assertEqual(loaded["step"], 1)
 
@@ -132,13 +144,69 @@ class CheckpointCallbackTests(unittest.TestCase):
             self.assertEqual(cb.best_metric, 2.0)
             loaded = torch.load(best_path, weights_only=False)
             self.assertEqual(loaded["step"], 1)
+            named_ep2 = run_dir / "checkpoints" / "best_epoch-0002_val_loss-2.5000.pt"
+            self.assertFalse(named_ep2.exists())
 
-            # Epoch 3: loss 1.5 -> overwrites best.pt (1.5 < 2.0)
+            # Epoch 3: loss 1.5 -> overwrites best.pt (1.5 < 2.0) and creates named file
             trainer.step_value = 3
             cb.on_epoch_end(trainer, 2, {"val/loss": 1.5})
             self.assertEqual(cb.best_metric, 1.5)
             loaded = torch.load(best_path, weights_only=False)
             self.assertEqual(loaded["step"], 3)
+            named_ep3 = run_dir / "checkpoints" / "best_epoch-0003_val_loss-1.5000.pt"
+            self.assertTrue(named_ep3.exists())
+
+    def test_checkpoint_logging_to_loggers(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory)
+            cb = CheckpointCallback(
+                run_dir=run_dir,
+                monitor="val/loss",
+                mode="min",
+                save_best=True,
+            )
+            trainer = DummyTrainer(step_value=1, run_dir=run_dir)
+            
+            # Create a mock logger
+            messages: list[str] = []
+            events: list[tuple[str, dict[str, Any]]] = []
+
+            class MockLogger:
+                def _print(self, message: str) -> None:
+                    messages.append(message)
+
+                def _write(self, event: str, payload: dict[str, Any]) -> None:
+                    events.append((event, payload))
+
+            mock_logger = MockLogger()
+            setattr(trainer, "loggers", [mock_logger])
+
+            # Epoch 1: Initial best checkpoint
+            cb.on_epoch_end(trainer, 0, {"val/loss": 2.5})
+            self.assertEqual(len(messages), 1)
+            self.assertIn("New best checkpoint", messages[0])
+            self.assertIn("best_epoch-0001_val_loss-2.5000.pt", messages[0])
+            self.assertEqual(len(events), 1)
+            self.assertEqual(events[0][0], "checkpoint")
+            self.assertEqual(events[0][1]["epoch"], 1)
+            self.assertEqual(events[0][1]["best_metric"], 2.5)
+            self.assertIsNone(events[0][1]["previous_best"])
+
+            # Epoch 2: Worse loss, no new best log
+            cb.on_epoch_end(trainer, 1, {"val/loss": 3.0})
+            self.assertEqual(len(messages), 1)
+            self.assertEqual(len(events), 1)
+
+            # Epoch 3: Improved loss -> logged with improvement
+            cb.on_epoch_end(trainer, 2, {"val/loss": 1.25})
+            self.assertEqual(len(messages), 2)
+            self.assertIn("best_epoch-0003_val_loss-1.2500.pt", messages[1])
+            self.assertIn("improved from", messages[1])
+            self.assertIn("2.5000", messages[1])
+            self.assertEqual(len(events), 2)
+            self.assertEqual(events[1][1]["epoch"], 3)
+            self.assertEqual(events[1][1]["previous_best"], 2.5)
+            self.assertEqual(events[1][1]["best_metric"], 1.25)
 
     def test_callback_state_restoration(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

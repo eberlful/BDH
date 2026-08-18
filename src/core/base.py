@@ -234,6 +234,10 @@ class BaseLogger(ABC):
     def log_metrics(self, metrics: Mapping[str, float], step: int) -> None:
         """Record scalar metrics at a global step."""
 
+    def log_message(self, message: str) -> None:
+        """Record a human-readable text message or event."""
+        pass
+
     def flush(self) -> None:
         pass
 
@@ -246,6 +250,10 @@ class BaseTrainer(ABC):
 
     def __init__(self, run_dir: Path | None = None, **_: Any) -> None:
         self.run_dir = Path(run_dir) if run_dir is not None else None
+
+    def log_message(self, message: str) -> None:
+        """Forward a message to all attached loggers."""
+        pass
 
     def setup(self) -> None:
         pass

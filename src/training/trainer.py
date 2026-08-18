@@ -267,18 +267,24 @@ class TorchTrainer(BaseTrainer):
         for logger in self.loggers:
             logger.flush()
 
+    def log_message(self, message: str) -> None:
+        for logger in self.loggers:
+            logger.log_message(message)
+        for logger in self.loggers:
+            logger.flush()
+
     def _call_hook(self, name: str, *args: Any) -> None:
-        for callback in self.callbacks:
-            getattr(callback, name)(self, *args)
         for logger in self.loggers:
             method = getattr(logger, name, None)
             if method is not None:
                 method(self, *args)
+        for callback in self.callbacks:
+            getattr(callback, name)(self, *args)
 
     def on_train_start(self) -> None:
         self.data_module.on_train_start(self)
         self.model.on_train_start(self)
-        for component in [*self.callbacks, *self.loggers]:
+        for component in [*self.loggers, *self.callbacks]:
             component.on_train_start(self)
         for logger in self.loggers:
             logger.log_hyperparameters(self.config)
@@ -286,7 +292,7 @@ class TorchTrainer(BaseTrainer):
     def on_train_end(self) -> None:
         self.model.on_train_end(self)
         self.data_module.on_train_end(self)
-        for component in [*self.callbacks, *self.loggers]:
+        for component in [*self.loggers, *self.callbacks]:
             component.on_train_end(self)
         for logger in self.loggers:
             logger.close()
@@ -295,22 +301,22 @@ class TorchTrainer(BaseTrainer):
 
     def on_epoch_start(self, epoch: int) -> None:
         self.model.on_epoch_start(self, epoch)
-        for component in [*self.callbacks, *self.loggers]:
+        for component in [*self.loggers, *self.callbacks]:
             component.on_epoch_start(self, epoch)
 
     def on_epoch_end(self, epoch: int, metrics: Mapping[str, float]) -> None:
         self.model.on_epoch_end(self, epoch, metrics)
-        for component in [*self.callbacks, *self.loggers]:
+        for component in [*self.loggers, *self.callbacks]:
             component.on_epoch_end(self, epoch, metrics)
 
     def on_train_batch_start(self, batch: Any, batch_idx: int) -> None:
         self.model.on_train_batch_start(self, batch, batch_idx)
-        for component in [*self.callbacks, *self.loggers]:
+        for component in [*self.loggers, *self.callbacks]:
             component.on_train_batch_start(self, batch, batch_idx)
 
     def on_train_batch_end(self, batch: Any, batch_idx: int, output: Mapping[str, Any]) -> None:
         self.model.on_train_batch_end(self, batch, batch_idx, output)
-        for component in [*self.callbacks, *self.loggers]:
+        for component in [*self.loggers, *self.callbacks]:
             component.on_train_batch_end(self, batch, batch_idx, output)
 
     def on_validation_start(self) -> None:

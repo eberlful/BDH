@@ -315,6 +315,9 @@ class TerminalLogger(BaseLogger):
         line = " │ ".join(parts)
         self._print(line)
 
+    def log_message(self, message: str) -> None:
+        self._print(message)
+
     def flush(self) -> None:
         if self.file_handle is not None and not getattr(self.file_handle, "closed", True):
             self.file_handle.flush()
@@ -341,6 +344,9 @@ class TextFileLogger(BaseLogger):
         timestamp = datetime.now(timezone.utc).isoformat()
         self.handle.write(f"{timestamp} {event} {json.dumps(payload, sort_keys=True, default=str)}\n")
         self.handle.flush()
+
+    def log_message(self, message: str) -> None:
+        self._write("log", {"message": message})
 
     def log_hyperparameters(self, parameters: Mapping[str, Any]) -> None:
         self._write("hyperparameters", parameters)

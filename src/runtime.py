@@ -19,6 +19,7 @@ from .core.registry import (
     LOGGER_REGISTRY,
     MODEL_REGISTRY,
     TRAINER_REGISTRY,
+    VALIDATOR_REGISTRY,
     load_builtin_components,
 )
 
@@ -74,6 +75,15 @@ def build_components(config: dict[str, Any], run_dir: Path):
             params.setdefault("verbose", True)
             item_copy["params"] = params
         loggers.append(LOGGER_REGISTRY.instantiate(item_copy, run_dir=run_dir))
+    validator_specs: list[dict[str, Any]] = []
+    if "validator" in config and config["validator"]:
+        validator_specs.append(config["validator"])
+    if "validators" in config and config["validators"]:
+        validator_specs.extend(config["validators"])
+    validators = [
+        VALIDATOR_REGISTRY.instantiate(item, run_dir=run_dir)
+        for item in validator_specs
+    ]
     trainer_settings = dict(config["trainer"])
     trainer_name = trainer_settings.pop("name", "torch")
     dtype = trainer_settings.pop("dtype", config.get("dtype", "float16"))
@@ -84,6 +94,7 @@ def build_components(config: dict[str, Any], run_dir: Path):
         data_module=data,
         callbacks=callbacks,
         loggers=loggers,
+        validators=validators,
         config=config,
         run_dir=run_dir,
         device=config.get("device", "auto"),
@@ -91,6 +102,7 @@ def build_components(config: dict[str, Any], run_dir: Path):
         mixed_precision=mixed_precision,
     )
     return trainer
+
 
 
 def component_signature(config: dict[str, Any]) -> dict[str, Any]:

@@ -67,6 +67,7 @@ DATA_REGISTRY = Registry("data module")
 CALLBACK_REGISTRY = Registry("callback")
 LOGGER_REGISTRY = Registry("logger")
 TRAINER_REGISTRY = Registry("trainer")
+VALIDATOR_REGISTRY = Registry("validator")
 
 _BUILTINS_LOADED = False
 
@@ -86,6 +87,11 @@ def load_builtin_components() -> None:
     from ..model import bdh_cq as _model_cq  # noqa: F401
     from ..model import gpt as _gpt  # noqa: F401
     from ..training import trainer as _trainer  # noqa: F401
+    try:
+        from ..validation import sudoku as _sudoku  # noqa: F401
+    except ImportError:
+        pass
 
     _BUILTINS_LOADED = True
+
 

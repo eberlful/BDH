@@ -283,3 +283,36 @@ class BaseTrainer(ABC):
 
     def restore_checkpoint(self, checkpoint_path: Path) -> None:
         raise NotImplementedError
+
+
+class BaseValidator(ABC):
+    """Task-specific validator lifecycle and evaluation contract."""
+
+    def __init__(self, run_dir: Path | None = None, **_: Any) -> None:
+        self.run_dir = Path(run_dir) if run_dir is not None else None
+
+    def on_validation_start(self, trainer: BaseTrainer) -> None:
+        """Called when validation begins."""
+
+    def on_validation_batch(
+        self,
+        trainer: BaseTrainer,
+        batch: Any,
+        batch_idx: int,
+        output: Mapping[str, Any] | None = None,
+    ) -> None:
+        """Called for each validation batch during standard validation loops."""
+
+    def on_validation_epoch_end(self, trainer: BaseTrainer) -> Mapping[str, float]:
+        """Compute and return metrics at the end of validation batches."""
+        return {}
+
+    def validate(
+        self,
+        model: BaseModel,
+        data_module: BaseDataModule,
+        trainer: BaseTrainer | None = None,
+    ) -> Mapping[str, float]:
+        """Perform validation and return computed metrics."""
+        return {}
+

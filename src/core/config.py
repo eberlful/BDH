@@ -15,6 +15,7 @@ from .registry import (
     LOGGER_REGISTRY,
     MODEL_REGISTRY,
     TRAINER_REGISTRY,
+    VALIDATOR_REGISTRY,
     load_builtin_components,
 )
 
@@ -55,7 +56,10 @@ _ROOT_KEYS = {
     "model",
     "data",
     "verbose",
+    "validator",
+    "validators",
 }
+
 
 
 def deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
@@ -127,7 +131,42 @@ def normalize_config(config: dict[str, Any]) -> None:
                 raise TypeError(f"Every {section} entry must be a string or mapping.")
         config[section] = normalized
 
+    if "validator" in config and config["validator"] is not None:
+        val = config["validator"]
+        if isinstance(val, str):
+            config["validator"] = {"name": val, "params": {}}
+        elif isinstance(val, dict):
+            if not isinstance(val.get("name"), str) or not val["name"]:
+                raise ValueError("Configuration section 'validator' requires a component name.")
+            params = val.setdefault("params", {})
+            if not isinstance(params, dict):
+                raise TypeError("validator.params must be a mapping.")
+            config["validator"] = {"name": val["name"], "params": dict(params)}
+        else:
+            raise TypeError("validator must be a string or mapping.")
+
+    if "validators" in config and config["validators"] is not None:
+        vals = config["validators"]
+        if not isinstance(vals, list):
+            raise TypeError("validators must be a list.")
+        normalized_validators: list[dict[str, Any]] = []
+        for val_item in vals:
+            if isinstance(val_item, str):
+                normalized_validators.append({"name": val_item, "params": {}})
+            elif isinstance(val_item, dict):
+                if not isinstance(val_item.get("name"), str) or not val_item["name"]:
+                    raise ValueError("Every validators entry requires a component name.")
+                if not isinstance(val_item.get("params", {}), dict):
+                    raise TypeError("Parameters for a validators entry must be a mapping.")
+                normalized_validators.append(
+                    {"name": val_item["name"], "params": dict(val_item.get("params", {}))}
+                )
+            else:
+                raise TypeError("Every validators entry must be a string or mapping.")
+        config["validators"] = normalized_validators
+
     valid_dtypes = {"float16", "fp16", "bfloat16", "bf16", "float32", "fp32", "float"}
+
     dtype = config.get("dtype")
     if dtype is not None:
         if not isinstance(dtype, str) or dtype.lower() not in valid_dtypes:
@@ -191,12 +230,17 @@ def validate_config(config: dict[str, Any]) -> None:
     MODEL_REGISTRY.get(config["model"]["name"])
     DATA_REGISTRY.get(config["data"]["name"])
     TRAINER_REGISTRY.get(config["trainer"].get("name", "torch"))
-    for item in config["callbacks"]:
+    for item in config.get("callbacks", []):
         CALLBACK_REGISTRY.get(item["name"])
-    for item in config["loggers"]:
+    for item in config.get("loggers", []):
         LOGGER_REGISTRY.get(item["name"])
+    if "validator" in config and config["validator"] is not None:
+        VALIDATOR_REGISTRY.get(config["validator"]["name"])
+    for item in config.get("validators", []):
+        VALIDATOR_REGISTRY.get(item["name"])
 
 
 def dump_config(config: dict[str, Any], path: str | Path) -> None:
     with Path(path).open("w", encoding="utf-8") as handle:
         yaml.safe_dump(config, handle, sort_keys=False)
+

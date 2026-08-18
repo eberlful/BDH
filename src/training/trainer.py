@@ -391,9 +391,9 @@ class TorchTrainer(BaseTrainer):
         if random_state.get("numpy") is not None:
             np.random.set_state(random_state["numpy"])
         if random_state.get("torch") is not None:
-            torch.set_rng_state(random_state["torch"])
+            torch.set_rng_state(random_state["torch"].detach().cpu())
         if random_state.get("cuda") is not None and torch.cuda.is_available():
-            torch.cuda.set_rng_state_all(random_state["cuda"])
+            torch.cuda.set_rng_state_all([state.detach().cpu() for state in random_state["cuda"]])
         callback_state = checkpoint.get("callback_state", {})
         for callback in self.callbacks:
             restore_state = getattr(callback, "restore_state", None)

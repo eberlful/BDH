@@ -1,7 +1,7 @@
 seed: 42
 device: auto
-dtype: float16
-mixed_precision: false
+dtype: float32
+mixed_precision: true
 runs_dir: runs
 verbose: false
 

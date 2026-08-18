@@ -1,7 +1,7 @@
 seed: 42
 device: auto
-dtype: float16
-mixed_precision: false
+dtype: float32
+mixed_precision: true
 runs_dir: runs
 
 model:
@@ -23,7 +23,7 @@ data:
     data_url: https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt
     tokenizer: gpt2
     context_length: 256
-    batch_size: 32
+    batch_size: 8
     validation_fraction: 0.1
     num_workers: 0
 

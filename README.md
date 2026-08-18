@@ -22,6 +22,19 @@ uv run python main.py train configs/tiny_shakespeare.yaml \
   --set model.params.d_model=384
 ```
 
+### Running in the background (nohup)
+
+Run training detached in the background using `nohup`:
+
+```bash
+nohup uv run python main.py train configs/tiny_shakespeare.yaml > train.log 2>&1 &
+```
+
+- **Monitor progress:** `tail -f train.log`
+- **Check process:** `ps aux | grep "python main.py"`
+- **Stop training:** `kill <PID>`
+
+
 Resume a run from its latest complete checkpoint:
 
 ```bash
@@ -74,6 +87,35 @@ To generate predictions from a checkpoint (the CLI automatically matches the tra
 ```bash
 uv run python main.py generate runs/20260812-120000-a1b2c3 \
   530070000600195000098000060800060003400803001700020006060000280000419005000080079 \
+  --max-tokens 600
+```
+
+### Generating and testing random Sudoku puzzles
+
+Use `scripts/generate_random_start_sudoku.py` to create random puzzles with configurable difficulty (`low`, `medium`, `high`) or clue counts:
+
+```bash
+# Generate an 81-character puzzle string (medium difficulty / 30 clues)
+uv run python scripts/generate_random_start_sudoku.py --difficulty medium
+
+# Print visual 9x9 ASCII grids for both the puzzle and its ground-truth solution
+uv run python scripts/generate_random_start_sudoku.py --difficulty high --grid --solution
+
+# Generate a Chain-of-Thought (CoT) text prompt
+uv run python scripts/generate_random_start_sudoku.py --cot
+```
+
+Test a trained model checkpoint on a freshly generated Sudoku in a single command:
+
+```bash
+# Standard discrete token Sudoku run:
+uv run python main.py generate runs/20260812-120000-a1b2c3 \
+  $(uv run python scripts/generate_random_start_sudoku.py --difficulty medium) \
+  --max-tokens 103
+
+# Sudoku Chain-of-Thought (CoT) run:
+uv run python main.py generate runs/20260812-120000-a1b2c3 \
+  $(uv run python scripts/generate_random_start_sudoku.py --difficulty medium) \
   --max-tokens 600
 ```
 

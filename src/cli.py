@@ -146,16 +146,21 @@ def run_generate(run_dir: Path, prompt: str, max_tokens: int) -> int:
                 pass
 
     input_ids = torch.tensor([token_ids], dtype=torch.long, device=trainer.device)
-    trainer.restore_checkpoint(checkpoint_path)
-    trainer.model.eval()
-    with torch.inference_mode():
-        generated = trainer.model.generate(
-            input_ids, max_new_tokens=max_tokens, eos_token_id=eos_token_id
-        )
-    if config["data"]["name"] == "sudoku":
-        print(" ".join(str(token) for token in generated[0].tolist()))
-    else:
-        print(tokenizer.decode(generated[0].tolist()))
+    try:
+        trainer.restore_checkpoint(checkpoint_path)
+        trainer.model.eval()
+        with torch.inference_mode():
+            generated = trainer.model.generate(
+                input_ids, max_new_tokens=max_tokens, eos_token_id=eos_token_id
+            )
+        if config["data"]["name"] == "sudoku":
+            print(" ".join(str(token) for token in generated[0].tolist()))
+        else:
+            print(tokenizer.decode(generated[0].tolist()))
+    finally:
+        for logger in getattr(trainer, "loggers", []):
+            if hasattr(logger, "close"):
+                logger.close()
     return 0
 
 

@@ -228,3 +228,83 @@ class CheckpointCallbackTests(unittest.TestCase):
             cb.restore_state(saved_state)
             self.assertEqual(cb.best_metric, 0.85)
             self.assertEqual(cb.resolved_mode, "max")
+
+    def test_restore_checkpoint_logging(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory)
+            ckpt_path = run_dir / "checkpoints" / "best.pt"
+            ckpt_path.parent.mkdir(parents=True, exist_ok=True)
+
+            class MockModel(torch.nn.Module):
+                def __init__(self) -> None:
+                    super().__init__()
+                    self.layer = torch.nn.Linear(2, 2)
+
+                def configure_optimizers(self) -> torch.optim.Optimizer:
+                    return torch.optim.SGD(self.parameters(), lr=0.01)
+
+                def setup(self, data_module: Any, trainer: Any) -> None:
+                    pass
+
+            model = MockModel()
+            payload = {
+                "model": model.state_dict(),
+                "optimizer": model.configure_optimizers().state_dict(),
+                "state": {"epoch": 2, "global_step": 150, "best_metric": 1.2345},
+                "callback_state": {"monitor": "val/loss", "best_metric": 1.2345},
+            }
+            torch.save(payload, ckpt_path)
+
+            messages: list[str] = []
+            events: list[tuple[str, dict[str, Any]]] = []
+
+            class MockLogger:
+                def _print(self, message: str) -> None:
+                    messages.append(message)
+
+                def _write(self, event: str, payload: dict[str, Any]) -> None:
+                    events.append((event, payload))
+
+            mock_logger = MockLogger()
+
+            class MockData:
+                def prepare_data(self) -> None:
+                    pass
+
+                def setup(self, stage: str) -> None:
+                    pass
+
+                def train_dataloader(self) -> list[Any]:
+                    return []
+
+                def val_dataloader(self) -> list[Any]:
+                    return []
+
+            from src.training.trainer import TorchTrainer
+
+            trainer = TorchTrainer(
+                model=MockModel(),
+                data_module=MockData(),
+                loggers=[mock_logger],
+                run_dir=run_dir,
+            )
+            trainer.setup()
+            trainer.restore_checkpoint(ckpt_path)
+
+            self.assertEqual(len(messages), 1)
+            self.assertIn("Loaded checkpoint", messages[0])
+            self.assertIn(str(ckpt_path), messages[0])
+            self.assertIn("epoch: [bold]2[/bold]", messages[0])
+            self.assertIn("step: [bold]150[/bold]", messages[0])
+            self.assertIn("val/loss: [bold]1.2345[/bold]", messages[0])
+
+            self.assertEqual(len(events), 1)
+            self.assertEqual(events[0][0], "checkpoint")
+            self.assertEqual(events[0][1]["event"], "checkpoint_restore")
+            self.assertEqual(events[0][1]["checkpoint"], str(ckpt_path))
+            self.assertEqual(events[0][1]["epoch"], 2)
+            self.assertEqual(events[0][1]["global_step"], 150)
+            self.assertEqual(events[0][1]["best_metric"], 1.2345)
+            self.assertEqual(events[0][1]["monitor"], "val/loss")
+            self.assertGreater(events[0][1]["size_bytes"], 0)
+

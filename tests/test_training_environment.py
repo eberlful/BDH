@@ -390,6 +390,72 @@ class TrainingEnvironmentTests(unittest.TestCase):
             with self.assertRaisesRegex(FileNotFoundError, "No best checkpoint"):
                 run_generate(run_dir, "hello", 1)
 
+    def test_resume_and_generate_log_checkpoint_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            data_path = root / "input.txt"
+            data_path.write_text("abcdefghijklmnopqrstuvwxyz " * 200, encoding="utf-8")
+            run_dir = root / "run"
+            config = {
+                "seed": 42,
+                "device": "cpu",
+                "model": {
+                    "name": "gpt_model",
+                    "params": {
+                        "vocab_size": "auto",
+                        "context_length": 16,
+                        "d_model": 16,
+                        "n_heads": 4,
+                        "n_layers": 1,
+                    },
+                },
+                "data": {
+                    "name": "tiny_shakespeare",
+                    "params": {
+                        "input_file_path": str(data_path),
+                        "tokenizer": "byte",
+                        "context_length": 16,
+                        "batch_size": 4,
+                    },
+                },
+                "trainer": {"name": "torch", "max_epochs": 1, "max_steps": 2, "log_every_n_steps": 1},
+                "callbacks": [{"name": "checkpoint", "params": {"save_best": True}}],
+                "loggers": [
+                    {"name": "terminal", "params": {}},
+                    {"name": "text_file", "params": {}},
+                ],
+            }
+            trainer = build_components(config, run_dir)
+            trainer.fit()
+            config_path = run_dir / "config.yaml"
+            config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
+
+            # Test resume logs checkpoint metadata
+            resumed = build_components(config, run_dir)
+            resumed.fit(run_dir / "checkpoints" / "last.pt")
+
+            terminal_log_file = run_dir / "terminal.log"
+            self.assertTrue(terminal_log_file.exists())
+            terminal_text = terminal_log_file.read_text(encoding="utf-8")
+            self.assertIn("Loaded checkpoint:", terminal_text)
+            self.assertIn("last.pt", terminal_text)
+            self.assertIn("epoch: 1", terminal_text)
+            self.assertIn("step: 2", terminal_text)
+
+            training_log_file = run_dir / "training.log"
+            self.assertTrue(training_log_file.exists())
+            training_text = training_log_file.read_text(encoding="utf-8")
+            self.assertIn("checkpoint_restore", training_text)
+            self.assertIn("last.pt", training_text)
+
+            # Test generate mode logs checkpoint metadata
+            output = io.StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(run_generate(run_dir, "hello", 3), 0)
+
+            terminal_text_after_gen = terminal_log_file.read_text(encoding="utf-8")
+            self.assertIn("best.pt", terminal_text_after_gen)
+
 
 if __name__ == "__main__":
     unittest.main()

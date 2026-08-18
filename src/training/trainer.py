@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import random
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -13,6 +14,22 @@ from torch import nn
 
 from ..core.base import BaseCallback, BaseDataModule, BaseLogger, BaseModel, BaseTrainer, BaseValidator
 from ..core.registry import TRAINER_REGISTRY
+
+
+def _format_size(size_bytes: int) -> str:
+    if size_bytes < 1024:
+        return f"{size_bytes} B"
+    if size_bytes < 1024 * 1024:
+        return f"{size_bytes / 1024:.1f} KB"
+    if size_bytes < 1024 * 1024 * 1024:
+        return f"{size_bytes / (1024 * 1024):.2f} MB"
+    return f"{size_bytes / (1024 * 1024 * 1024):.2f} GB"
+
+
+def _format_metric_val(value: float) -> str:
+    if abs(value) >= 1e4 or (0 < abs(value) < 1e-3):
+        return f"{value:.2e}"
+    return f"{value:.4f}"
 
 
 @dataclass
@@ -354,6 +371,7 @@ class TorchTrainer(BaseTrainer):
     def restore_checkpoint(self, checkpoint_path: Path) -> None:
         if self.optimizer is None:
             raise RuntimeError("Cannot restore a checkpoint before trainer setup.")
+        checkpoint_path = Path(checkpoint_path)
         checkpoint = torch.load(checkpoint_path, map_location=self.device, weights_only=False)
         self.model.load_state_dict(checkpoint["model"])
         self.optimizer.load_state_dict(checkpoint["optimizer"])
@@ -381,3 +399,79 @@ class TorchTrainer(BaseTrainer):
             restore_state = getattr(callback, "restore_state", None)
             if restore_state is not None:
                 restore_state(callback_state)
+        self._log_checkpoint_restored(checkpoint_path, checkpoint)
+
+    def _log_checkpoint_restored(self, checkpoint_path: Path, checkpoint: Mapping[str, Any]) -> None:
+        state = checkpoint.get("state", {})
+        callback_state = checkpoint.get("callback_state", {})
+        epoch = int(state.get("epoch", 0))
+        global_step = int(state.get("global_step", 0))
+        best_metric = callback_state.get("best_metric", state.get("best_metric"))
+        monitor = callback_state.get("monitor")
+
+        size_bytes: int | None = None
+        size_str: str | None = None
+        try:
+            if checkpoint_path.exists():
+                size_bytes = checkpoint_path.stat().st_size
+                size_str = _format_size(size_bytes)
+        except OSError:
+            pass
+
+        now_str = datetime.now().strftime("%H:%M:%S")
+
+        metric_part_rich = ""
+        metric_part_plain = ""
+        if best_metric is not None:
+            try:
+                val = float(best_metric)
+                if val not in (float("inf"), float("-inf")):
+                    formatted_val = _format_metric_val(val)
+                    if monitor:
+                        metric_part_rich = f" │ {monitor}: [bold]{formatted_val}[/bold]"
+                        metric_part_plain = f" │ {monitor}: {formatted_val}"
+                    else:
+                        metric_part_rich = f" │ best_metric: [bold]{formatted_val}[/bold]"
+                        metric_part_plain = f" │ best_metric: {formatted_val}"
+            except (ValueError, TypeError):
+                pass
+
+        size_part_rich = f" │ size: [dim]{size_str}[/dim]" if size_str else ""
+        size_part_plain = f" │ size: {size_str}" if size_str else ""
+
+        rich_msg = (
+            f"[dim cyan][{now_str}][/dim cyan] │ 📦 [bold cyan]Loaded checkpoint:[/bold cyan] "
+            f"[cyan]{checkpoint_path}[/cyan] │ epoch: [bold]{epoch}[/bold] │ "
+            f"step: [bold]{global_step}[/bold]{metric_part_rich}{size_part_rich}"
+        )
+        plain_msg = (
+            f"[{now_str}] │ 📦 Loaded checkpoint: {checkpoint_path} │ epoch: {epoch} │ "
+            f"step: {global_step}{metric_part_plain}{size_part_plain}"
+        )
+
+        for logger in getattr(self, "loggers", []):
+            if hasattr(logger, "_print"):
+                logger._print(rich_msg)
+            elif hasattr(logger, "log_message"):
+                logger.log_message(plain_msg)
+            if hasattr(logger, "_write"):
+                payload: dict[str, Any] = {
+                    "event": "checkpoint_restore",
+                    "checkpoint": str(checkpoint_path),
+                    "epoch": epoch,
+                    "global_step": global_step,
+                }
+                if best_metric is not None:
+                    try:
+                        val = float(best_metric)
+                        if val not in (float("inf"), float("-inf")):
+                            payload["best_metric"] = val
+                    except (ValueError, TypeError):
+                        pass
+                if monitor:
+                    payload["monitor"] = monitor
+                if size_bytes is not None:
+                    payload["size_bytes"] = size_bytes
+                logger._write("checkpoint", payload)
+            if hasattr(logger, "flush"):
+                logger.flush()

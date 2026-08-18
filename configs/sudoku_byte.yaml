@@ -52,7 +52,7 @@ callbacks:
   - name: checkpoint
     params:
       save_best: true
-      monitor: val/sudoku_board_accuracy
+      monitor: val/sudoku_cell_accuracy
 
 loggers:
   - name: terminal

@@ -19,7 +19,8 @@ Override configuration values without editing YAML:
 ```bash
 uv run python main.py train configs/tiny_shakespeare.yaml \
   --set trainer.max_epochs=20 \
-  --set model.params.d_model=384
+  --set model.params.d_model=384 \
+  --set compile=true
 ```
 
 ### Running in the background (nohup)

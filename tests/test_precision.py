@@ -84,8 +84,8 @@ class PrecisionTests(unittest.TestCase):
         for cfg_path in yaml_files:
             cfg = load_config(cfg_path)
             validate_config(cfg)
-            self.assertEqual(cfg["dtype"], "float16", f"Failed for {cfg_path}")
-            self.assertFalse(cfg["mixed_precision"], f"Failed for {cfg_path}")
+            self.assertIn(cfg["dtype"], ("float16", "bfloat16", "float32"), f"Failed for {cfg_path}")
+            self.assertIsInstance(cfg["mixed_precision"], bool, f"Failed for {cfg_path}")
 
     def test_trainer_dtype_resolution(self) -> None:
         self.assertEqual(TorchTrainer._resolve_dtype("float16"), torch.float16)

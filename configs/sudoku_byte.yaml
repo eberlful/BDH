@@ -1,0 +1,60 @@
+# Sudoku Byte-level Tokenizer with GPT Model
+# Byte encoding creates 344 tokens for direct grid->solution sequences, requiring context_length >= 512.
+
+seed: 42
+device: auto
+dtype: float32
+mixed_precision: false
+runs_dir: runs
+verbose: false
+
+compile: "reduce-overhead" # options: "default" | "reduce-overhead" | "max-autotune" | False
+
+model:
+  name: gpt_model
+  params:
+    vocab_size: auto
+    context_length: 512
+    d_model: 256
+    n_heads: 8
+    n_layers: 6
+    dropout: 0.1
+    learning_rate: 0.0003
+    weight_decay: 0.1
+
+data:
+  name: sudoku_cot
+  params:
+    num_samples: 10000
+    validation_fraction: 0.1
+    clues: 30
+    batch_size: 16
+    context_length: 512
+    reasoning_mode: none  # Direct input-to-solution mapping
+    tokenizer: byte
+    num_workers: 0
+    shuffle: true
+
+trainer:
+  name: torch
+  max_epochs: 10
+  log_every_n_steps: 100
+  validate_every_n_epochs: 1
+  gradient_clip_norm: 1.0
+  gradient_accumulation_steps: 2
+
+validator:
+  name: sudoku
+  params:
+    num_eval_samples: 32
+
+callbacks:
+  - name: checkpoint
+    params:
+      save_best: true
+      monitor: val/sudoku_board_accuracy
+
+loggers:
+  - name: terminal
+  - name: text_file
+  - name: tensorboard

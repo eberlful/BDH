@@ -88,6 +88,7 @@ def build_components(config: dict[str, Any], run_dir: Path):
     trainer_name = trainer_settings.pop("name", "torch")
     dtype = trainer_settings.pop("dtype", config.get("dtype", "float16"))
     mixed_precision = trainer_settings.pop("mixed_precision", config.get("mixed_precision", False))
+    compile_model = trainer_settings.pop("compile", config.get("compile", False))
     trainer = TRAINER_REGISTRY.instantiate(
         {"name": trainer_name, "params": trainer_settings},
         model=model,
@@ -100,6 +101,7 @@ def build_components(config: dict[str, Any], run_dir: Path):
         device=config.get("device", "auto"),
         dtype=dtype,
         mixed_precision=mixed_precision,
+        compile=compile_model,
     )
     return trainer
 

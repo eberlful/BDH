@@ -76,6 +76,7 @@ class TorchTrainer(BaseTrainer):
         device: str | torch.device = "auto",
         dtype: str | torch.dtype = "float16",
         mixed_precision: bool = False,
+        compile: bool | Mapping[str, Any] | str = False,
         max_epochs: int = 1,
         max_steps: int | None = None,
         log_every_n_steps: int = 10,
@@ -95,6 +96,7 @@ class TorchTrainer(BaseTrainer):
         self.device = self._resolve_device(device)
         self.dtype = self._resolve_dtype(dtype)
         self.mixed_precision = bool(mixed_precision)
+        self.compile = compile
         self.scaler = torch.amp.GradScaler(
             device=self.device.type,
             enabled=bool(
@@ -149,6 +151,13 @@ class TorchTrainer(BaseTrainer):
             self.model.to(self.device)
         else:
             self.model.to(device=self.device, dtype=self.dtype)
+        if self.compile:
+            if isinstance(self.compile, dict):
+                self.model = torch.compile(self.model, **self.compile)
+            elif isinstance(self.compile, str):
+                self.model = torch.compile(self.model, mode=self.compile)
+            else:
+                self.model = torch.compile(self.model)
         self.train_loader = self.data_module.train_dataloader()
         self.val_loader = self.data_module.val_dataloader()
         configured = self.model.configure_optimizers()
@@ -350,8 +359,9 @@ class TorchTrainer(BaseTrainer):
     def checkpoint_state(self) -> dict[str, Any]:
         if self.optimizer is None:
             raise RuntimeError("Cannot create a checkpoint before trainer setup.")
+        raw_model = getattr(self.model, "_orig_mod", self.model)
         return {
-            "model": self.model.state_dict(),
+            "model": raw_model.state_dict(),
             "optimizer": self.optimizer.state_dict(),
             "scheduler": self.scheduler.state_dict() if self.scheduler is not None else None,
             "scaler": self.scaler.state_dict() if self.scaler.is_enabled() else None,
@@ -373,7 +383,14 @@ class TorchTrainer(BaseTrainer):
             raise RuntimeError("Cannot restore a checkpoint before trainer setup.")
         checkpoint_path = Path(checkpoint_path)
         checkpoint = torch.load(checkpoint_path, map_location=self.device, weights_only=False)
-        self.model.load_state_dict(checkpoint["model"])
+        state_dict = checkpoint["model"]
+        if any(k.startswith("_orig_mod.") for k in state_dict.keys()):
+            state_dict = {
+                (k[len("_orig_mod."):] if k.startswith("_orig_mod.") else k): v
+                for k, v in state_dict.items()
+            }
+        raw_model = getattr(self.model, "_orig_mod", self.model)
+        raw_model.load_state_dict(state_dict)
         self.optimizer.load_state_dict(checkpoint["optimizer"])
         if self.scheduler is not None and checkpoint.get("scheduler") is not None:
             self.scheduler.load_state_dict(checkpoint["scheduler"])

@@ -1,19 +1,11 @@
-# Memory Benchmark (Apple Silicon / MPS, context_length: 256, n_layer: 6, n_embd: 256, n_head: 4):
-# | Batch Size | Peak Memory (MPS) | Status (16 GB Mac)   |
-# | :--------- | :---------------- | :------------------- |
-# | 1          | ~0.8 GB           | OK                   |
-# | 2          | ~0.9 GB           | OK                   |
-# | 4          | ~1.0 GB           | OK                   |
-# | 8          | ~1.2 GB           | OK (Recommended)     |
-# | 16         | > 15 GB           | OOM (Out of Memory)  |
-# | 32         | > 20 GB           | OOM (Out of Memory)  |
-#
-# Effective batch size = batch_size (8) * gradient_accumulation_steps (4) = 32
+# Memory Benchmark (Apple Silicon / MPS, context_length: 512, n_layer: 6, n_embd: 256, n_head: 4):
+# Byte encoding creates 344 tokens for direct grid->solution sequences, requiring context_length >= 512.
+# Effective batch size = batch_size (4) * gradient_accumulation_steps (8) = 32
 
 seed: 42
 device: auto
 dtype: float32
-mixed_precision: false  
+mixed_precision: false
 runs_dir: runs
 verbose: false
 
@@ -23,24 +15,25 @@ model:
   name: bdh
   params:
     vocab_size: auto
-    context_length: 256
+    context_length: 512
     n_layer: 6
     n_embd: 256
     n_head: 4
     dropout: 0.1
     learning_rate: 0.0003
     weight_decay: 0.1
-    mlp_internal_dim_multiplier: 32  # default 128
+    mlp_internal_dim_multiplier: 32  # memory-efficient setting for 16GB Mac
+
 data:
   name: sudoku_cot
   params:
     num_samples: 10000
     validation_fraction: 0.1
     clues: 30
-    batch_size: 8
-    context_length: 256
+    batch_size: 4
+    context_length: 512
     reasoning_mode: none  # Direct input-to-solution mapping without CoT steps
-    tokenizer: gpt2
+    tokenizer: byte
     num_workers: 0
     shuffle: true
 
@@ -50,13 +43,12 @@ trainer:
   log_every_n_steps: 100
   validate_every_n_epochs: 1
   gradient_clip_norm: 1.0
-  gradient_accumulation_steps: 4
+  gradient_accumulation_steps: 8
 
 validator:
   name: sudoku
   params:
     num_eval_samples: 32
-
 
 callbacks:
   - name: checkpoint
@@ -68,5 +60,3 @@ loggers:
   - name: terminal
   - name: text_file
   - name: tensorboard
-
-

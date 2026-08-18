@@ -25,6 +25,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "device": "auto",
     "dtype": "float16",
     "mixed_precision": False,
+    "compile": False,
     "runs_dir": "runs",
     "plugins": [],
     "trainer": {
@@ -37,6 +38,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "gradient_accumulation_steps": 1,
         "dtype": "float16",
         "mixed_precision": False,
+        "compile": False,
     },
     "callbacks": [{"name": "checkpoint", "params": {"save_best": True}}],
     "loggers": ["terminal", "text_file", "tensorboard"],
@@ -48,6 +50,7 @@ _ROOT_KEYS = {
     "device",
     "dtype",
     "mixed_precision",
+    "compile",
     "runs_dir",
     "plugins",
     "trainer",
@@ -179,6 +182,13 @@ def normalize_config(config: dict[str, Any]) -> None:
             raise ValueError(
                 f"Invalid trainer.dtype '{trainer_dtype}'. Expected one of 'bfloat16', 'float16', 'float32'."
             )
+
+    compile_opt = config.get("compile")
+    if compile_opt is not None and not isinstance(compile_opt, (bool, str, dict)):
+        raise TypeError("compile must be a boolean, string (mode), or mapping of compilation parameters.")
+    trainer_compile = trainer.get("compile")
+    if trainer_compile is not None and not isinstance(trainer_compile, (bool, str, dict)):
+        raise TypeError("trainer.compile must be a boolean, string (mode), or mapping of compilation parameters.")
 
 
 def apply_overrides(config: dict[str, Any], overrides: list[str]) -> None:

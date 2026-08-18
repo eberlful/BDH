@@ -194,3 +194,92 @@ class SudokuValidatorTests(unittest.TestCase):
         metrics = validator.validate(model, dm)
         self.assertIn("val/sudoku_board_accuracy", metrics)
         self.assertEqual(metrics["val/sudoku_parse_rate"], 0.0)
+
+    def test_end_to_end_training_with_sudoku_validator(self) -> None:
+        import json
+        import yaml
+        from src.core.config import load_config, validate_config
+        from src.runtime import build_components
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            run_dir = Path(temp_dir) / "run"
+            config_dict = {
+                "seed": 42,
+                "device": "cpu",
+                "runs_dir": str(Path(temp_dir) / "runs"),
+                "model": {
+                    "name": "gpt_model",
+                    "params": {
+                        "vocab_size": "auto",
+                        "context_length": 128,
+                        "d_model": 32,
+                        "n_heads": 2,
+                        "n_layers": 1,
+                    },
+                },
+                "data": {
+                    "name": "sudoku_cot",
+                    "params": {
+                        "num_samples": 4,
+                        "validation_fraction": 0.5,
+                        "clues": 60,
+                        "batch_size": 2,
+                        "context_length": 128,
+                        "reasoning_mode": "none",
+                        "tokenizer": "gpt2",
+                    },
+                },
+                "validator": {
+                    "name": "sudoku",
+                    "params": {
+                        "num_eval_samples": 2,
+                    },
+                },
+                "trainer": {
+                    "name": "torch",
+                    "max_epochs": 2,
+                    "log_every_n_steps": 1,
+                    "validate_every_n_epochs": 1,
+                },
+                "callbacks": [
+                    {
+                        "name": "checkpoint",
+                        "params": {
+                            "save_best": True,
+                            "monitor": "val/sudoku_board_accuracy",
+                        },
+                    }
+                ],
+                "loggers": [
+                    {"name": "text_file", "params": {"filename": "training.log"}},
+                ],
+            }
+            config_path = Path(temp_dir) / "config.yaml"
+            config_path.write_text(yaml.safe_dump(config_dict), encoding="utf-8")
+            config = load_config(config_path)
+            validate_config(config)
+
+            trainer = build_components(config, run_dir)
+            self.assertEqual(len(trainer.validators), 1)
+            self.assertIsInstance(trainer.validators[0], SudokuValidator)
+
+            trainer.fit()
+
+            # Verify checkpoints
+            best_ckpt = run_dir / "checkpoints" / "best.pt"
+            self.assertTrue(best_ckpt.exists())
+            loaded = torch.load(best_ckpt, weights_only=False)
+            self.assertIn("callback_state", loaded)
+            self.assertEqual(loaded["callback_state"]["monitor"], "val/sudoku_board_accuracy")
+
+            # Verify training log contains validator metrics
+            log_file = run_dir / "training.log"
+            self.assertTrue(log_file.exists())
+            log_lines = log_file.read_text(encoding="utf-8").strip().splitlines()
+            metric_events = [json.loads(line.split(" ", 2)[2]) for line in log_lines if "metrics" in line]
+            val_events = [ev for ev in metric_events if "val/sudoku_board_accuracy" in ev]
+            self.assertTrue(len(val_events) > 0)
+            self.assertIn("val/sudoku_validity_rate", val_events[0])
+            self.assertIn("val/sudoku_cell_accuracy", val_events[0])
+            self.assertIn("val/sudoku_parse_rate", val_events[0])
+

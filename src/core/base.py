@@ -307,6 +307,10 @@ class BaseValidator(ABC):
         """Compute and return metrics at the end of validation batches."""
         return {}
 
+    def on_validation_end(self, trainer: BaseTrainer, metrics: Mapping[str, float]) -> None:
+        """Called when validation completes."""
+        pass
+
     def validate(
         self,
         model: BaseModel,
@@ -315,4 +319,5 @@ class BaseValidator(ABC):
     ) -> Mapping[str, float]:
         """Perform validation and return computed metrics."""
         return {}
+
 

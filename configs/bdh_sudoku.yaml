@@ -50,13 +50,21 @@ trainer:
   gradient_clip_norm: 1.0
   gradient_accumulation_steps: 4
 
+validator:
+  name: sudoku
+  params:
+    num_eval_samples: 32
+
+
 callbacks:
   - name: checkpoint
     params:
       save_best: true
+      monitor: val/sudoku_board_accuracy
 
 loggers:
   - name: terminal
   - name: text_file
   - name: tensorboard
+
 

@@ -11,7 +11,7 @@ import numpy as np
 import torch
 from torch import nn
 
-from ..core.base import BaseCallback, BaseDataModule, BaseLogger, BaseModel, BaseTrainer
+from ..core.base import BaseCallback, BaseDataModule, BaseLogger, BaseModel, BaseTrainer, BaseValidator
 from ..core.registry import TRAINER_REGISTRY
 
 
@@ -53,6 +53,7 @@ class TorchTrainer(BaseTrainer):
         data_module: BaseDataModule,
         callbacks: list[BaseCallback] | None = None,
         loggers: list[BaseLogger] | None = None,
+        validators: list[BaseValidator] | None = None,
         config: Mapping[str, Any] | None = None,
         run_dir: Path | None = None,
         device: str | torch.device = "auto",
@@ -71,6 +72,8 @@ class TorchTrainer(BaseTrainer):
         self.data_module = data_module
         self.callbacks = callbacks or []
         self.loggers = loggers or []
+        self.validators = validators or []
+
         self.config = dict(config or {})
         self.device = self._resolve_device(device)
         self.dtype = self._resolve_dtype(dtype)
@@ -243,7 +246,18 @@ class TorchTrainer(BaseTrainer):
                 if "loss" in metrics:
                     losses.append(metrics["loss"])
                 self._call_hook("on_validation_batch_end", batch, batch_idx, metrics)
+                for validator in self.validators:
+                    validator.on_validation_batch(self, batch, batch_idx, metrics)
         result = {"val/loss": float(np.mean(losses)) if losses else float("nan")}
+        for validator in self.validators:
+            epoch_metrics = validator.on_validation_epoch_end(self)
+            for k, v in epoch_metrics.items():
+                key = k if k.startswith("val/") else f"val/{k}"
+                result[key] = float(v)
+            val_metrics = validator.validate(self.model, self.data_module, trainer=self)
+            for k, v in val_metrics.items():
+                key = k if k.startswith("val/") else f"val/{k}"
+                result[key] = float(v)
         self.on_validation_end(result)
         return result
 
@@ -301,13 +315,14 @@ class TorchTrainer(BaseTrainer):
 
     def on_validation_start(self) -> None:
         self.model.on_validation_start(self)
-        for component in [*self.callbacks, *self.loggers]:
+        for component in [*self.callbacks, *self.loggers, *self.validators]:
             component.on_validation_start(self)
 
     def on_validation_end(self, metrics: Mapping[str, float]) -> None:
         self.model.on_validation_end(self, metrics)
-        for component in [*self.callbacks, *self.loggers]:
+        for component in [*self.callbacks, *self.loggers, *self.validators]:
             component.on_validation_end(self, metrics)
+
 
     def checkpoint_state(self) -> dict[str, Any]:
         if self.optimizer is None:

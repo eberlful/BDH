@@ -1,0 +1,67 @@
+# BDH-CQ Sudoku Latent Reasoning Configuration
+# Memory-optimized for Apple Silicon / MPS (16 GB Unified Memory)
+# Direct prompt-to-solution mapping without intermediate CoT tokens
+# Latent Workspace refinement through R=4 recurrent reasoning steps
+
+seed: 42
+device: auto
+dtype: float32
+mixed_precision: false
+runs_dir: runs
+verbose: false
+
+compile: false # options: "default" | "reduce-overhead" | "max-autotune" | false
+
+model:
+  name: bdh_cq
+  params:
+    vocab_size: auto
+    context_length: 256
+    n_layer: 6
+    n_embd: 256
+    n_head: 4
+    dropout: 0.1
+    learning_rate: 0.0003
+    weight_decay: 0.1
+    mlp_internal_dim_multiplier: 32       # Memory-efficient setting for 16GB Mac
+    latent_reasoning_steps: 4             # R = 4 recurrent latent reasoning cycles
+    loss_schedule: ramp                   # Deep Supervision schedule: 'ramp' | 'uniform' | 'final_only'
+
+data:
+  name: sudoku_cot
+  params:
+    num_samples: 10000
+    validation_fraction: 0.1
+    clues: 30                             # Standard difficulty (~30 given digits)
+    batch_size: 8                         # Safe per-step batch size for BPTT unroll
+    context_length: 256
+    reasoning_mode: none                  # Direct input-to-solution (no explicit CoT trace)
+    tokenizer: gpt2
+    num_workers: 0
+    shuffle: true
+
+trainer:
+  name: torch
+  dtype: float32
+  max_epochs: 20
+  log_every_n_steps: 100
+  validate_every_n_epochs: 1
+  gradient_clip_norm: 1.0
+  gradient_accumulation_steps: 4         # Effective batch size = 8 * 4 = 32
+
+validator:
+  name: sudoku
+  params:
+    num_eval_samples: 32
+    max_new_tokens: 180
+
+callbacks:
+  - name: checkpoint
+    params:
+      save_best: true
+      monitor: val/sudoku_cell_accuracy
+
+loggers:
+  - name: terminal
+  - name: text_file
+  - name: tensorboard

@@ -58,6 +58,7 @@ graph TD
 
 - **[[Assoziatives Gedächtnis & Fast-Weights]]**: Mathematische Herleitung der Fast-Weight-Akkumulation $\rho_{K,l} = \sum_{\tau} v_\tau x_\tau^T$ und des abrufenden Gedächtnisses.
 - **[[Latenter Workspace & Deep Supervision]]**: Rekurrente Denkzyklen ($H_0 \to H_R$), Gradientenstabilität und Test-Time Compute Scaling.
+- **[[Halting Head & PonderNet]]**: Adaptive Computation Time (ACT), probabilistisches Halten pro Sample und geometrischer Prior.
 - **[[RoPE & Sparse Synaptic Gating]]**: Quantisierte Frequenzverteilungen, Rotary Position Embeddings und ReLU-Aktivierungssparsität.
 - **[[LayerNorm & Flaschenhals-Dynamik]]**: Verhinderung von Norm-Explosionen, Kalibrierung für ReLU-Gating (Denoising), Trainingsstabilität und parameterfreie Head-Normalisierung.
 - **[[Speicheroptimierung & VRAM-Reduktion]]**: Ursachen des VRAM-Bedarfs, detaillierte Analyse der 6 Optimierungsmethoden (8-Bit AdamW, Lion, Adafactor, Checkpointing, Mixed Precision, Gradient Accumulation) und Best Practices für 16 GB Apple Silicon.

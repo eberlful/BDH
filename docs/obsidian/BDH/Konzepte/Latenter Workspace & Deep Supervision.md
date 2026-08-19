@@ -106,11 +106,13 @@ $$w_r = \begin{cases} 1 & r = R \\ 0 & r < R \end{cases}$$
 Ein herausragender Vorteil des latenten Workspaces ist die Möglichkeit, **Test-Time Compute Scaling** durchzuführen:
 - Ein Modell, das mit $R=2$ oder $R=4$ trainiert wurde, kann zur Inferenzzeit mit $R=6$ oder $R=8$ betrieben werden.
 - Dies erlaubt es, schwierigen Testfällen dynamisch mehr Rechenzeit zuzuordnen, ohne das neuronale Netz neu trainieren oder verändern zu müssen.
+- Durch die Integration von [[Halting Head & PonderNet]] kann das Modell diesen Abbruchzeitpunkt sogar vollautomatisch pro Eingabebeispiel selbst bestimmen.
 
 ---
 
 ## 🔗 Verwandte Notizen
 
+- [[Halting Head & PonderNet]] – Adaptive Computation Time und probabilistisches Halten pro Sample.
 - [[BDH-CQ - Contextual Query]] – Die vollständige Modellarchitektur.
 - [[Assoziatives Gedächtnis & Fast-Weights]] – Zusammenwirken von Gedächtnis und latentem Raum.
 - [[Modellvergleich & Benchmarks]] – Vergleich der Denkparadigmen.

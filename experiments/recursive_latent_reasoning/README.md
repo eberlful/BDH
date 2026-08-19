@@ -32,12 +32,13 @@ Hierbei durchläuft der Zustand $H_r$ alle $L$ Layer des Modells unter Beibehalt
 
 Da das Modell bei $R$ rekurrenten Schritten über $L$ Schichten abgerollt wird, vervielfacht sich der Speicherbedarf für Aktivierungen im Backward-Pass:
 
-| Parameter | Wert | Rationale |
-| :--- | :--- | :--- |
-| **`mlp_internal_dim_multiplier`** | `32` | Reduziert den internen Sparse-Vektorraum von $128 \times D$ auf $32 \times D$, passend für 16GB Unified Memory. |
-| **`context_length`** | `256` | Ausreichend für Prompt $\to$ Solution via GPT-2 Tokenizer ($\approx 100$ Tokens). |
-| **`batch_size`** | `8` | Verhindert MPS-OOM während des unrollierten BPTT über $R=4$. |
-| **`gradient_accumulation_steps`** | `4` | Ergibt eine stabile effektive Batch-Size von $32$. |
+| Parameter | GPT-2 Tokenizer (`bdh_cq_sudoku.yaml`) | Byte Tokenizer (`bdh_cq_sudoku_byte.yaml`) | Rationale |
+| :--- | :--- | :--- | :--- |
+| **`vocab_size`** | `50257` | `257` | Enorme Parameter- und Speicherersparnis im LM-Head bei Byte-Level. |
+| **`context_length`** | `256` | `512` | Byte-Grid benötigt ca. $344$ Bytes (Zeichen) für Prompt $\to$ Solution. |
+| **`batch_size`** | `8` | `4` | Verhindert MPS-OOM während des unrollierten BPTT über $R=4$. |
+| **`gradient_accumulation_steps`** | `4` (Eff. Batch: 32) | `8` (Eff. Batch: 32) | Ergibt eine stabile effektive Batch-Size von $32$. |
+| **`mlp_internal_dim_multiplier`** | `32` | `32` | Reduziert den internen Sparse-Vektorraum von $128 \times D$ auf $32 \times D$. |
 
 ---
 

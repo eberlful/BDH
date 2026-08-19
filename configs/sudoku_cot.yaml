@@ -21,7 +21,8 @@ data:
   params:
     num_samples: 10000
     validation_fraction: 0.1
-    clues: 30
+    clues: [20, 45]       # Random difficulty: 20 (hard) to 45 (easy) clues per puzzle
+    val_clues: 30         # Fixed evaluation difficulty (30 clues)
     batch_size: 16
     context_length: 1024
     reasoning_mode: full  # Supported: full (CoT + solution), none (direct solution), context_only (masked CoT context)

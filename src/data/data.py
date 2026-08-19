@@ -78,16 +78,48 @@ class SudokuExample:
 class SudokuDataset(Dataset[dict[str, torch.Tensor]]):
     """Causal-LM examples for serialized Sudoku completion traces."""
 
-    def __init__(self, examples: list[SudokuExample]) -> None:
+    def __init__(
+        self,
+        examples: list[SudokuExample],
+        context_length: int | None = None,
+        pad_token_id: int = SUDOKU_END_TOKEN,
+    ) -> None:
         if not examples:
             raise ValueError("A Sudoku dataset must contain at least one example.")
-        sequence_length = len(examples[0].token_ids)
-        if any(len(example.token_ids) != sequence_length for example in examples):
-            raise ValueError("All Sudoku examples must have the same sequence length.")
-        values = torch.tensor([example.token_ids for example in examples], dtype=torch.long)
         self.examples = examples
-        self.inputs = values[:, :-1]
-        self.targets = values[:, 1:]
+        self.context_length = context_length
+        self.pad_token_id = pad_token_id
+
+        first_len = len(examples[0].token_ids)
+        all_same_len = all(len(example.token_ids) == first_len for example in examples)
+
+        if all_same_len:
+            values = torch.tensor([example.token_ids for example in examples], dtype=torch.long)
+            self.inputs = values[:, :-1]
+            self.targets = values[:, 1:]
+        else:
+            max_seq_len = (
+                context_length
+                if context_length is not None
+                else max(len(ex.token_ids) - 1 for ex in examples)
+            )
+            input_list: list[torch.Tensor] = []
+            target_list: list[torch.Tensor] = []
+            for example in examples:
+                tokens = example.token_ids
+                seq_in = tokens[:-1]
+                seq_tgt = tokens[1:]
+                if len(seq_in) > max_seq_len:
+                    seq_in = seq_in[:max_seq_len]
+                    seq_tgt = seq_tgt[:max_seq_len]
+                in_tensor = torch.full((max_seq_len,), self.pad_token_id, dtype=torch.long)
+                tgt_tensor = torch.full((max_seq_len,), -100, dtype=torch.long)
+                in_tensor[: len(seq_in)] = torch.tensor(seq_in, dtype=torch.long)
+                tgt_tensor[: len(seq_tgt)] = torch.tensor(seq_tgt, dtype=torch.long)
+                input_list.append(in_tensor)
+                target_list.append(tgt_tensor)
+            self.inputs = torch.stack(input_list)
+            self.targets = torch.stack(target_list)
 
     def __len__(self) -> int:
         return len(self.examples)
@@ -162,9 +194,48 @@ def _serialize_sudoku(puzzle: tuple[int, ...], solution: tuple[int, ...]) -> tup
     return tuple(tokens)
 
 
+def _sample_clue_count(
+    clues_spec: int | list[int] | tuple[int, ...], rng: random.Random
+) -> int:
+    if isinstance(clues_spec, int):
+        return clues_spec
+    if isinstance(clues_spec, (list, tuple)):
+        if len(clues_spec) == 2:
+            return rng.randint(clues_spec[0], clues_spec[1])
+        if len(clues_spec) > 2:
+            return rng.choice(list(clues_spec))
+        if len(clues_spec) == 1:
+            return clues_spec[0]
+    raise ValueError(f"Invalid clues specification: {clues_spec}")
+
+
+def _validate_clues_spec(clues_spec: Any) -> None:
+    if isinstance(clues_spec, int):
+        if not 0 <= clues_spec <= SUDOKU_CELL_COUNT:
+            raise ValueError(f"clues must be between 0 and {SUDOKU_CELL_COUNT}, got {clues_spec}.")
+    elif isinstance(clues_spec, (list, tuple)):
+        if not clues_spec:
+            raise ValueError("clues range/list cannot be empty.")
+        for c in clues_spec:
+            if not isinstance(c, int) or not (0 <= c <= SUDOKU_CELL_COUNT):
+                raise ValueError(f"Each clue in {clues_spec} must be an integer between 0 and {SUDOKU_CELL_COUNT}.")
+        if len(clues_spec) == 2 and clues_spec[0] > clues_spec[1]:
+            raise ValueError(f"clues min ({clues_spec[0]}) cannot be greater than clues max ({clues_spec[1]}).")
+    else:
+        raise ValueError(f"clues must be an int or list/tuple of ints, got {type(clues_spec).__name__}.")
+
+
+def _get_min_clues(clues_spec: int | list[int] | tuple[int, ...]) -> int:
+    if isinstance(clues_spec, int):
+        return clues_spec
+    if isinstance(clues_spec, (list, tuple)):
+        return min(clues_spec)
+    raise ValueError(f"Invalid clues specification: {clues_spec}")
+
+
 def _generate_sudoku_examples(
     count: int,
-    clues: int,
+    clues: int | list[int] | tuple[int, ...],
     seed: int,
     forbidden_puzzles: set[tuple[int, ...]] | None = None,
 ) -> list[SudokuExample]:
@@ -173,7 +244,8 @@ def _generate_sudoku_examples(
     examples: list[SudokuExample] = []
     while len(examples) < count:
         solution = _generate_solved_board(rng)
-        blank_positions = rng.sample(range(SUDOKU_CELL_COUNT), SUDOKU_CELL_COUNT - clues)
+        curr_clues = _sample_clue_count(clues, rng)
+        blank_positions = rng.sample(range(SUDOKU_CELL_COUNT), SUDOKU_CELL_COUNT - curr_clues)
         puzzle_values = list(solution)
         for position in blank_positions:
             puzzle_values[position] = 0
@@ -301,7 +373,10 @@ class SudokuDataModule(BaseDataModule):
         self,
         num_samples: int = 10_000,
         validation_fraction: float = 0.1,
-        clues: int = 30,
+        clues: int | list[int] | tuple[int, ...] = 30,
+        val_clues: int | list[int] | tuple[int, ...] | None = None,
+        min_clues: int | None = None,
+        max_clues: int | None = None,
         batch_size: int = 32,
         context_length: int = 256,
         num_workers: int = 0,
@@ -312,11 +387,20 @@ class SudokuDataModule(BaseDataModule):
             raise ValueError("num_samples must be at least 2; batch_size and context_length must be positive.")
         if not 0.0 < validation_fraction < 1.0:
             raise ValueError("validation_fraction must be between 0 and 1.")
-        if not 0 <= clues <= SUDOKU_CELL_COUNT:
-            raise ValueError(f"clues must be between 0 and {SUDOKU_CELL_COUNT}.")
+
+        if min_clues is not None and max_clues is not None:
+            clues = [min_clues, max_clues]
+        elif min_clues is not None or max_clues is not None:
+            raise ValueError("Both min_clues and max_clues must be specified if one is provided.")
+
+        _validate_clues_spec(clues)
+        if val_clues is not None:
+            _validate_clues_spec(val_clues)
+
         self.num_samples = num_samples
         self.validation_fraction = validation_fraction
         self.clues = clues
+        self.val_clues = val_clues if val_clues is not None else clues
         self.batch_size = batch_size
         self.context_length = context_length
         self.num_workers = num_workers
@@ -325,7 +409,9 @@ class SudokuDataModule(BaseDataModule):
         self.vocab_size = SUDOKU_VOCAB_SIZE
         self.train_dataset: SudokuDataset | None = None
         self.val_dataset: SudokuDataset | None = None
-        self.sequence_length = SUDOKU_CELL_COUNT + 2 * (SUDOKU_CELL_COUNT - clues) + 2
+
+        min_c = _get_min_clues(self.clues)
+        self.sequence_length = SUDOKU_CELL_COUNT + 2 * (SUDOKU_CELL_COUNT - min_c) + 2
         if self.sequence_length - 1 > context_length:
             raise ValueError(
                 f"Sudoku sequence length {self.sequence_length - 1} exceeds context_length={context_length}; "
@@ -340,9 +426,9 @@ class SudokuDataModule(BaseDataModule):
         val_count = self.num_samples - train_count
         train_examples = _generate_sudoku_examples(train_count, self.clues, self.seed)
         forbidden = {example.puzzle for example in train_examples}
-        val_examples = _generate_sudoku_examples(val_count, self.clues, self.seed + 1_000_003, forbidden)
-        self.train_dataset = SudokuDataset(train_examples)
-        self.val_dataset = SudokuDataset(val_examples)
+        val_examples = _generate_sudoku_examples(val_count, self.val_clues, self.seed + 1_000_003, forbidden)
+        self.train_dataset = SudokuDataset(train_examples, context_length=self.context_length)
+        self.val_dataset = SudokuDataset(val_examples, context_length=self.context_length)
 
     def train_dataloader(self) -> DataLoader[dict[str, torch.Tensor]]:
         if self.train_dataset is None:

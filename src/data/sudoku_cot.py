@@ -196,9 +196,40 @@ class SudokuCoTDataset(Dataset[dict[str, torch.Tensor]]):
         }
 
 
+def _sample_clue_count(
+    clues_spec: int | list[int] | tuple[int, ...], rng: random.Random
+) -> int:
+    if isinstance(clues_spec, int):
+        return clues_spec
+    if isinstance(clues_spec, (list, tuple)):
+        if len(clues_spec) == 2:
+            return rng.randint(clues_spec[0], clues_spec[1])
+        if len(clues_spec) > 2:
+            return rng.choice(list(clues_spec))
+        if len(clues_spec) == 1:
+            return clues_spec[0]
+    raise ValueError(f"Invalid clues specification: {clues_spec}")
+
+
+def _validate_clues_spec(clues_spec: Any) -> None:
+    if isinstance(clues_spec, int):
+        if not 0 <= clues_spec <= SUDOKU_CELL_COUNT:
+            raise ValueError(f"clues must be between 0 and {SUDOKU_CELL_COUNT}, got {clues_spec}.")
+    elif isinstance(clues_spec, (list, tuple)):
+        if not clues_spec:
+            raise ValueError("clues range/list cannot be empty.")
+        for c in clues_spec:
+            if not isinstance(c, int) or not (0 <= c <= SUDOKU_CELL_COUNT):
+                raise ValueError(f"Each clue in {clues_spec} must be an integer between 0 and {SUDOKU_CELL_COUNT}.")
+        if len(clues_spec) == 2 and clues_spec[0] > clues_spec[1]:
+            raise ValueError(f"clues min ({clues_spec[0]}) cannot be greater than clues max ({clues_spec[1]}).")
+    else:
+        raise ValueError(f"clues must be an int or list/tuple of ints, got {type(clues_spec).__name__}.")
+
+
 def _generate_sudoku_cot_raw_samples(
     count: int,
-    clues: int,
+    clues: int | list[int] | tuple[int, ...],
     seed: int,
     forbidden_puzzles: set[tuple[int, ...]] | None = None,
 ) -> list[dict[str, Any]]:
@@ -207,7 +238,8 @@ def _generate_sudoku_cot_raw_samples(
     samples: list[dict[str, Any]] = []
     while len(samples) < count:
         solution = _generate_solved_board(rng)
-        blank_positions = rng.sample(range(SUDOKU_CELL_COUNT), SUDOKU_CELL_COUNT - clues)
+        curr_clues = _sample_clue_count(clues, rng)
+        blank_positions = rng.sample(range(SUDOKU_CELL_COUNT), SUDOKU_CELL_COUNT - curr_clues)
         puzzle_values = list(solution)
         for position in blank_positions:
             puzzle_values[position] = 0
@@ -226,7 +258,10 @@ class SudokuCoTDataModule(BaseDataModule):
         self,
         num_samples: int = 10_000,
         validation_fraction: float = 0.1,
-        clues: int = 30,
+        clues: int | list[int] | tuple[int, ...] = 30,
+        val_clues: int | list[int] | tuple[int, ...] | None = None,
+        min_clues: int | None = None,
+        max_clues: int | None = None,
         batch_size: int = 16,
         context_length: int = 1024,
         reasoning_mode: str = "full",
@@ -239,8 +274,16 @@ class SudokuCoTDataModule(BaseDataModule):
             raise ValueError("num_samples must be at least 2; batch_size and context_length must be positive.")
         if not 0.0 < validation_fraction < 1.0:
             raise ValueError("validation_fraction must be between 0 and 1.")
-        if not 0 <= clues <= SUDOKU_CELL_COUNT:
-            raise ValueError(f"clues must be between 0 and {SUDOKU_CELL_COUNT}.")
+
+        if min_clues is not None and max_clues is not None:
+            clues = [min_clues, max_clues]
+        elif min_clues is not None or max_clues is not None:
+            raise ValueError("Both min_clues and max_clues must be specified if one is provided.")
+
+        _validate_clues_spec(clues)
+        if val_clues is not None:
+            _validate_clues_spec(val_clues)
+
         if reasoning_mode not in ALLOWED_REASONING_MODES:
             raise ValueError(
                 f"reasoning_mode must be one of {ALLOWED_REASONING_MODES}, got {reasoning_mode!r}."
@@ -249,6 +292,7 @@ class SudokuCoTDataModule(BaseDataModule):
         self.num_samples = num_samples
         self.validation_fraction = validation_fraction
         self.clues = clues
+        self.val_clues = val_clues if val_clues is not None else clues
         self.batch_size = batch_size
         self.context_length = context_length
         self.reasoning_mode = reasoning_mode
@@ -275,7 +319,7 @@ class SudokuCoTDataModule(BaseDataModule):
         val_count = self.num_samples - train_count
         train_samples = _generate_sudoku_cot_raw_samples(train_count, self.clues, self.seed)
         forbidden = {s["puzzle"] for s in train_samples}
-        val_samples = _generate_sudoku_cot_raw_samples(val_count, self.clues, self.seed + 1_000_003, forbidden)
+        val_samples = _generate_sudoku_cot_raw_samples(val_count, self.val_clues, self.seed + 1_000_003, forbidden)
 
         self.train_dataset = SudokuCoTDataset(
             train_samples,

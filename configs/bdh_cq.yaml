@@ -16,6 +16,11 @@ model:
     dropout: 0.1
     latent_reasoning_steps: 3
     loss_schedule: ramp
+    # PonderNet (Adaptive Computation Time):
+    enable_pondernet: false               # Set to true to learn dynamic halting per sample
+    ponder_lambda_p: 0.2                  # Geometric prior parameter (p in Geom(p))
+    ponder_beta: 0.01                     # KL regularization weight
+    ponder_halt_threshold: 0.95           # Inference halting threshold
     learning_rate: 0.0003
     weight_decay: 0.1
 

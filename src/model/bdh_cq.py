@@ -23,6 +23,10 @@ class BDHCQConfig:
     vocab_size: int = 256
     latent_reasoning_steps: int = 1
     loss_schedule: str = "ramp"
+    enable_pondernet: bool = False
+    ponder_lambda_p: float = 0.2
+    ponder_beta: float = 0.01
+    ponder_halt_threshold: float = 0.95
 
 
 def compute_loss_schedule_weights(steps: int, schedule: str) -> list[float]:
@@ -41,6 +45,78 @@ def compute_loss_schedule_weights(steps: int, schedule: str) -> list[float]:
         raise ValueError(
             f"Invalid loss_schedule '{schedule}'. Expected one of 'ramp', 'uniform', 'final_only'."
         )
+
+
+def compute_geometric_prior(
+    steps: int,
+    lambda_p: float,
+    device: torch.device | None = None,
+    dtype: torch.dtype | None = None,
+) -> torch.Tensor:
+    """Computes a geometric prior distribution over reasoning steps [1..R]."""
+    if steps < 1:
+        raise ValueError("steps must be at least 1.")
+    if not (0.0 < lambda_p <= 1.0):
+        raise ValueError("lambda_p must be in (0, 1].")
+    if steps == 1:
+        return torch.tensor([1.0], device=device, dtype=dtype if dtype is not None else torch.float32)
+
+    r_idx = torch.arange(steps - 1, device=device, dtype=torch.float32)
+    p_unscaled = ((1.0 - lambda_p) ** r_idx) * lambda_p
+    p_last = torch.clamp(1.0 - p_unscaled.sum(), min=1e-8)
+    prior = torch.cat([p_unscaled, p_last.unsqueeze(0)])
+    prior = torch.clamp(prior, min=1e-8)
+    prior = prior / prior.sum()
+    if dtype is not None:
+        prior = prior.to(dtype=dtype)
+    return prior
+
+
+def compute_halting_probabilities(
+    lambdas: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Given halting probabilities lambda_{i, r} in (0, 1) with shape [B, R],
+    computes:
+        p: step execution probability distribution [B, R] where sum_r p_{i, r} = 1
+        cum_p: cumulative probability [B, R]
+    """
+    B, R = lambdas.shape
+    if R == 1:
+        p = torch.ones_like(lambdas)
+        return p, p
+
+    p_list: list[torch.Tensor] = []
+    unhalted = torch.ones((B, 1), device=lambdas.device, dtype=lambdas.dtype)
+    for r in range(R - 1):
+        lam = lambdas[:, r : r + 1]
+        step_p = unhalted * lam
+        p_list.append(step_p)
+        unhalted = unhalted * (1.0 - lam)
+    p_list.append(unhalted)
+    p = torch.cat(p_list, dim=-1)
+    p = torch.clamp(p, min=1e-8)
+    p = p / p.sum(dim=-1, keepdim=True)
+    cum_p = torch.cumsum(p, dim=-1)
+    return p, cum_p
+
+
+def compute_ponder_kl_loss(
+    p: torch.Tensor,
+    lambda_p: float,
+) -> torch.Tensor:
+    """Computes KL(p || prior) averaged across the batch."""
+    _, R = p.shape
+    prior = compute_geometric_prior(
+        R, lambda_p, device=p.device, dtype=p.dtype
+    ).unsqueeze(0)
+    kl = (
+        p
+        * (
+            torch.log(p.clamp(min=1e-8))
+            - torch.log(prior.clamp(min=1e-8))
+        )
+    ).sum(dim=-1)
+    return kl.mean()
 
 
 def get_freqs(n: int, theta: float, dtype: torch.dtype) -> torch.Tensor:
@@ -123,6 +199,9 @@ class BDHCQ(nn.Module):
             torch.zeros((D, config.vocab_size)).normal_(std=0.02)
         )
 
+        if config.enable_pondernet:
+            self.halt_head = nn.Linear(D, 1)
+
         self.apply(self._init_weights)
 
     def _init_weights(self, module: nn.Module) -> None:
@@ -132,6 +211,14 @@ class BDHCQ(nn.Module):
                 nn.init.zeros_(module.bias)
         elif isinstance(module, nn.Embedding):
             nn.init.normal_(module.weight, mean=0.0, std=0.02)
+
+    def _compute_halt_lambda(self, h_seq: torch.Tensor) -> torch.Tensor:
+        h_pool = h_seq.squeeze(1).mean(dim=1)
+        if hasattr(self, "halt_head"):
+            return torch.sigmoid(self.halt_head(h_pool))
+        return torch.full(
+            (h_seq.size(0), 1), 0.5, device=h_seq.device, dtype=h_seq.dtype
+        )
 
     def encode_contextual_memory(self, demo_idx: torch.Tensor) -> list[torch.Tensor]:
         """Sequentially ingest demonstration tokens and return per-layer fast-weights rho_{K, l}."""
@@ -169,10 +256,27 @@ class BDHCQ(nn.Module):
         latent_reasoning_steps: int | None = None,
         return_contextual_memory: bool = False,
         return_intermediate_logits: bool = False,
+        return_ponder_info: bool = False,
     ) -> (
         tuple[torch.Tensor, torch.Tensor | None]
         | tuple[torch.Tensor, torch.Tensor | None, list[torch.Tensor]]
         | tuple[torch.Tensor, torch.Tensor | None, list[torch.Tensor], list[torch.Tensor]]
+        | tuple[torch.Tensor, torch.Tensor | None, torch.Tensor, torch.Tensor]
+        | tuple[
+            torch.Tensor,
+            torch.Tensor | None,
+            list[torch.Tensor],
+            torch.Tensor,
+            torch.Tensor,
+        ]
+        | tuple[
+            torch.Tensor,
+            torch.Tensor | None,
+            list[torch.Tensor],
+            list[torch.Tensor],
+            torch.Tensor,
+            torch.Tensor,
+        ]
     ):
         C = self.config
 
@@ -194,6 +298,9 @@ class BDHCQ(nn.Module):
 
         accumulated_memory: list[torch.Tensor] = []
         intermediate_logits: list[torch.Tensor] = []
+        step_lambdas: list[torch.Tensor] = []
+
+        collect_ponder = return_ponder_info or C.enable_pondernet
 
         if contextual_memory is not None:
             # Query-only sequence evaluated against precomputed contextual memory
@@ -217,6 +324,9 @@ class BDHCQ(nn.Module):
                     )
                     y = self.ln(yMLP)
                     h = self.ln(h + y)
+
+                if collect_ponder:
+                    step_lambdas.append(self._compute_halt_lambda(h))
 
                 if return_intermediate_logits:
                     step_logits = h.view(B, T, D) @ self.lm_head
@@ -280,6 +390,9 @@ class BDHCQ(nn.Module):
                         y_query = self.ln(yMLP_query)
                         h = self.ln(h + y_query)
 
+                    if collect_ponder:
+                        step_lambdas.append(self._compute_halt_lambda(h))
+
                     if return_intermediate_logits:
                         step_x = torch.cat([x_demo, h], dim=2)
                         step_logits = step_x.view(B, T, D) @ self.lm_head
@@ -289,6 +402,8 @@ class BDHCQ(nn.Module):
                 x = torch.cat([x_demo, x_query], dim=2)
             else:
                 x = x_demo
+                if collect_ponder:
+                    step_lambdas = [self._compute_halt_lambda(x_demo)] * R
                 if return_intermediate_logits:
                     demo_logits = x.view(B, T, D) @ self.lm_head
                     intermediate_logits = [demo_logits] * R
@@ -318,16 +433,44 @@ class BDHCQ(nn.Module):
                     y = self.ln(yMLP)
                     h = self.ln(h + y)
 
+                if collect_ponder:
+                    step_lambdas.append(self._compute_halt_lambda(h))
+
                 if return_intermediate_logits:
                     step_logits = h.view(B, T, D) @ self.lm_head
                     intermediate_logits.append(step_logits)
 
             x = h
 
+        if step_lambdas:
+            lambdas = torch.cat(step_lambdas, dim=-1)
+            ponder_probs, _ = compute_halting_probabilities(lambdas)
+        else:
+            lambdas = torch.zeros((B, R), device=idx.device, dtype=torch.float32)
+            ponder_probs = (
+                torch.ones((B, R), device=idx.device, dtype=torch.float32) / R
+            )
+
         logits = x.view(B, T, D) @ self.lm_head
         loss = None
         if targets is not None:
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
+
+        if return_ponder_info:
+            if return_contextual_memory and return_intermediate_logits:
+                return (
+                    logits,
+                    loss,
+                    accumulated_memory,
+                    intermediate_logits,
+                    ponder_probs,
+                    lambdas,
+                )
+            if return_contextual_memory:
+                return logits, loss, accumulated_memory, ponder_probs, lambdas
+            if return_intermediate_logits:
+                return logits, loss, intermediate_logits, ponder_probs, lambdas
+            return logits, loss, ponder_probs, lambdas
 
         if return_contextual_memory and return_intermediate_logits:
             return logits, loss, accumulated_memory, intermediate_logits
@@ -397,6 +540,10 @@ class ConfiguredBDHCQ(BaseModel):
         mlp_internal_dim_multiplier: int = 128,
         latent_reasoning_steps: int = 1,
         loss_schedule: str = "ramp",
+        enable_pondernet: bool = False,
+        ponder_lambda_p: float = 0.2,
+        ponder_beta: float = 0.01,
+        ponder_halt_threshold: float = 0.95,
         learning_rate: float = 3e-4,
         weight_decay: float = 0.1,
         optimizer: str | dict[str, Any] = "adamw",
@@ -430,6 +577,12 @@ class ConfiguredBDHCQ(BaseModel):
             raise ValueError(
                 f"Invalid loss_schedule '{loss_schedule}'. Expected one of 'ramp', 'uniform', 'final_only'."
             )
+        if ponder_lambda_p <= 0.0 or ponder_lambda_p > 1.0:
+            raise ValueError("ponder_lambda_p must be in (0, 1].")
+        if ponder_beta < 0.0:
+            raise ValueError("ponder_beta must be non-negative.")
+        if ponder_halt_threshold <= 0.0 or ponder_halt_threshold > 1.0:
+            raise ValueError("ponder_halt_threshold must be in (0, 1].")
 
         self.vocab_size = vocab_size_int
         self.context_length = context_length
@@ -447,6 +600,10 @@ class ConfiguredBDHCQ(BaseModel):
             vocab_size=self.vocab_size,
             latent_reasoning_steps=latent_reasoning_steps,
             loss_schedule=loss_schedule,
+            enable_pondernet=enable_pondernet,
+            ponder_lambda_p=ponder_lambda_p,
+            ponder_beta=ponder_beta,
+            ponder_halt_threshold=ponder_halt_threshold,
         )
         self.network = BDHCQ(self.config)
 
@@ -457,13 +614,29 @@ class ConfiguredBDHCQ(BaseModel):
         contextual_memory: list[torch.Tensor] | None = None,
         latent_reasoning_steps: int | None = None,
         return_intermediate_logits: bool = False,
-    ) -> torch.Tensor | tuple[torch.Tensor, list[torch.Tensor]]:
+        return_ponder_info: bool = False,
+    ) -> (
+        torch.Tensor
+        | tuple[torch.Tensor, list[torch.Tensor]]
+        | tuple[torch.Tensor, list[torch.Tensor], torch.Tensor, torch.Tensor]
+    ):
         if input_ids.ndim != 2:
             raise ValueError("input_ids must have shape [batch, sequence].")
         if input_ids.size(1) > self.context_length:
             raise ValueError(
                 f"Sequence length {input_ids.size(1)} exceeds context_length={self.context_length}."
             )
+        if return_ponder_info:
+            logits, _, intermediate_logits, ponder_probs, lambdas = self.network(
+                input_ids,
+                demo_len=demo_len,
+                contextual_memory=contextual_memory,
+                latent_reasoning_steps=latent_reasoning_steps,
+                return_intermediate_logits=True,
+                return_ponder_info=True,
+            )
+            return logits, intermediate_logits, ponder_probs, lambdas
+
         if return_intermediate_logits:
             logits, _, intermediate_logits = self.network(
                 input_ids,
@@ -520,7 +693,7 @@ class ConfiguredBDHCQ(BaseModel):
     def _compute_loss_and_logits(
         self,
         batch: Mapping[str, torch.Tensor | int | str],
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, dict[str, float]]:
         demo_len = int(batch.get("demo_len", 0))
         latent_reasoning_steps = (
             int(batch["latent_reasoning_steps"])
@@ -534,6 +707,48 @@ class ConfiguredBDHCQ(BaseModel):
         )
         target_ids = batch["target_ids"]
 
+        if self.config.enable_pondernet:
+            logits, _, intermediate_logits, ponder_probs, _ = self.network(
+                batch["input_ids"],
+                demo_len=demo_len,
+                latent_reasoning_steps=latent_reasoning_steps,
+                return_intermediate_logits=True,
+                return_ponder_info=True,
+            )
+            B, T = batch["input_ids"].shape
+            R = len(intermediate_logits)
+
+            step_losses_per_sample = []
+            for step_logits in intermediate_logits:
+                ce = F.cross_entropy(
+                    step_logits.reshape(-1, step_logits.size(-1)),
+                    target_ids.reshape(-1),
+                    reduction="none",
+                ).view(B, T).mean(dim=1)
+                step_losses_per_sample.append(ce)
+
+            stacked_step_losses = torch.stack(step_losses_per_sample, dim=1)  # [B, R]
+            task_loss_per_sample = (ponder_probs * stacked_step_losses).sum(dim=1)  # [B]
+            task_loss = task_loss_per_sample.mean()
+
+            kl_loss = compute_ponder_kl_loss(ponder_probs, self.config.ponder_lambda_p)
+            total_loss = task_loss + self.config.ponder_beta * kl_loss
+
+            step_indices = torch.arange(
+                1, R + 1, device=ponder_probs.device, dtype=ponder_probs.dtype
+            ).unsqueeze(0)
+            expected_steps = (ponder_probs * step_indices).sum(dim=1).mean()
+
+            stacked_logits = torch.stack(intermediate_logits, dim=1)  # [B, R, T, V]
+            weighted_logits = (ponder_probs.view(B, R, 1, 1) * stacked_logits).sum(dim=1)
+
+            extra_metrics = {
+                "ponder/task_loss": float(task_loss.item()),
+                "ponder/kl_loss": float(kl_loss.item()),
+                "ponder/expected_steps": float(expected_steps.item()),
+            }
+            return total_loss, weighted_logits, extra_metrics
+
         weights = compute_loss_schedule_weights(latent_reasoning_steps, loss_schedule)
         if len(weights) == 1:
             logits = self(
@@ -544,7 +759,7 @@ class ConfiguredBDHCQ(BaseModel):
             loss = F.cross_entropy(
                 logits.reshape(-1, logits.size(-1)), target_ids.reshape(-1)
             )
-            return loss, logits
+            return loss, logits, {}
 
         logits, intermediate_logits = self(
             batch["input_ids"],
@@ -560,26 +775,30 @@ class ConfiguredBDHCQ(BaseModel):
                     target_ids.reshape(-1),
                 )
                 loss = loss + w * step_loss
-        return loss, logits
+        return loss, logits, {}
 
     def _compute_loss(
         self,
         batch: Mapping[str, torch.Tensor | int | str],
     ) -> torch.Tensor:
-        loss, _ = self._compute_loss_and_logits(batch)
+        loss, _, _ = self._compute_loss_and_logits(batch)
         return loss
 
     def training_step(
         self, batch: Mapping[str, torch.Tensor | int | str], batch_idx: int
-    ) -> Mapping[str, torch.Tensor]:
-        loss, logits = self._compute_loss_and_logits(batch)
-        return {"loss": loss, "logits": logits}
+    ) -> Mapping[str, torch.Tensor | float]:
+        loss, logits, extra_metrics = self._compute_loss_and_logits(batch)
+        out: dict[str, torch.Tensor | float] = {"loss": loss, "logits": logits}
+        out.update(extra_metrics)
+        return out
 
     def validation_step(
         self, batch: Mapping[str, torch.Tensor | int | str], batch_idx: int
-    ) -> Mapping[str, torch.Tensor]:
-        loss, logits = self._compute_loss_and_logits(batch)
-        return {"loss": loss, "logits": logits}
+    ) -> Mapping[str, torch.Tensor | float]:
+        loss, logits, extra_metrics = self._compute_loss_and_logits(batch)
+        out: dict[str, torch.Tensor | float] = {"loss": loss, "logits": logits}
+        out.update(extra_metrics)
+        return out
 
     def configure_optimizers(self) -> torch.optim.Optimizer:
         has_fp16 = any(p.dtype == torch.float16 for p in self.parameters())

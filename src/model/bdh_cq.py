@@ -47,6 +47,34 @@ def compute_loss_schedule_weights(steps: int, schedule: str) -> list[float]:
         )
 
 
+def compute_masked_cross_entropy_per_sample(
+    logits: torch.Tensor,
+    target_ids: torch.Tensor,
+    ignore_index: int = -100,
+) -> torch.Tensor:
+    """Compute token cross-entropy per sample without diluting masked positions."""
+    if logits.ndim != target_ids.ndim + 1:
+        raise ValueError(
+            "logits must have exactly one more dimension than target_ids "
+            f"(got {logits.shape} and {target_ids.shape})"
+        )
+    if logits.shape[:-1] != target_ids.shape:
+        raise ValueError(
+            "logits and target_ids must agree on batch/sequence dimensions "
+            f"(got {logits.shape} and {target_ids.shape})"
+        )
+
+    valid = target_ids.ne(ignore_index)
+    token_losses = F.cross_entropy(
+        logits.reshape(-1, logits.size(-1)),
+        target_ids.reshape(-1),
+        reduction="none",
+        ignore_index=ignore_index,
+    ).view_as(target_ids)
+    valid_count = valid.sum(dim=-1).clamp_min(1)
+    return token_losses.sum(dim=-1) / valid_count
+
+
 def compute_geometric_prior(
     steps: int,
     lambda_p: float,
@@ -720,11 +748,7 @@ class ConfiguredBDHCQ(BaseModel):
 
             step_losses_per_sample = []
             for step_logits in intermediate_logits:
-                ce = F.cross_entropy(
-                    step_logits.reshape(-1, step_logits.size(-1)),
-                    target_ids.reshape(-1),
-                    reduction="none",
-                ).view(B, T).mean(dim=1)
+                ce = compute_masked_cross_entropy_per_sample(step_logits, target_ids)
                 step_losses_per_sample.append(ce)
 
             stacked_step_losses = torch.stack(step_losses_per_sample, dim=1)  # [B, R]

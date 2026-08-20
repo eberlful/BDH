@@ -10,10 +10,30 @@ from src.model.bdh_cq import (
     compute_geometric_prior,
     compute_halting_probabilities,
     compute_ponder_kl_loss,
+    compute_masked_cross_entropy_per_sample,
 )
 
 
 class TestPonderNetComponents(unittest.TestCase):
+    def test_masked_cross_entropy_ignores_prompt_positions_in_mean(self):
+        # Only one of four positions is a target. The masked positions must
+        # not dilute the loss for the valid solution token.
+        logits = torch.zeros(1, 4, 3)
+        target_ids = torch.tensor([[0, -100, -100, -100]])
+
+        loss = compute_masked_cross_entropy_per_sample(logits, target_ids)
+
+        expected = torch.log(torch.tensor(3.0))
+        self.assertTrue(torch.allclose(loss, expected.unsqueeze(0)))
+
+    def test_masked_cross_entropy_is_zero_without_valid_targets(self):
+        logits = torch.zeros(1, 2, 3)
+        target_ids = torch.full((1, 2), -100)
+
+        loss = compute_masked_cross_entropy_per_sample(logits, target_ids)
+
+        self.assertEqual(loss.item(), 0.0)
+
     def test_geometric_prior(self):
         # Edge case: R = 1
         prior_1 = compute_geometric_prior(1, 0.2)

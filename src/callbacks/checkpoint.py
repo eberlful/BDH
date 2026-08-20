@@ -31,7 +31,7 @@ class CheckpointCallback(BaseCallback):
         self,
         run_dir: Path | None = None,
         save_best: bool = True,
-        save_epoch: bool = True,
+        save_epoch: bool = False,
         monitor: str = "val/loss",
         mode: str = "auto",
         **kwargs: Any,
@@ -89,12 +89,16 @@ class CheckpointCallback(BaseCallback):
             self._save(payload, self.checkpoint_dir / f"epoch-{epoch + 1:04d}.pt")
         self._save(payload, self.checkpoint_dir / "last.pt")
         if is_best and metric is not None:
-            clean_monitor = _sanitize_metric_name(self.monitor)
-            val_str = _format_metric_val(metric)
-            best_filename = f"best_epoch-{epoch + 1:04d}_{clean_monitor}-{val_str}.pt"
-            self._save(payload, self.checkpoint_dir / best_filename)
+            if self.save_epoch:
+                clean_monitor = _sanitize_metric_name(self.monitor)
+                val_str = _format_metric_val(metric)
+                best_filename = f"best_epoch-{epoch + 1:04d}_{clean_monitor}-{val_str}.pt"
+                self._save(payload, self.checkpoint_dir / best_filename)
+                log_filename = best_filename
+            else:
+                log_filename = "best.pt"
             self._save(payload, self.checkpoint_dir / "best.pt")
-            self._log_best_checkpoint(trainer, epoch, prev_best, metric, best_filename)
+            self._log_best_checkpoint(trainer, epoch, prev_best, metric, log_filename)
 
     def _log_best_checkpoint(
         self,

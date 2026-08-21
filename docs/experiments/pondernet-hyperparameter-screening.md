@@ -919,3 +919,60 @@ Die geschätzte Seed-Streuung der Cell-Accuracy beträgt ungefähr `0.087` für 
 ### Entscheidung
 
 Der PonderNet-Kandidat wird für weitere Untersuchungen beibehalten. Der Runner ist jetzt auf einen fokussierten 10.000-Step-Lauf mit Seed 42 eingestellt, um zu prüfen, ob die höhere Cell-Accuracy in vollständige Sudoku-Boards übergeht. Weitere Regularisierungs-Sweeps sind zunächst nicht nötig.
+
+## Auswertung des 10.000-Step-Laufs vom 21.08.2026
+
+Run-Batch: `runs/sudoku-overfit-20260820-215315/`
+
+| Modell | Train-Loss bei Step 10000 | Bester Val-Loss | Beste Val-Cell-Accuracy | Board-Accuracy | Validity | Expected Steps | Trainingsdiagnose (4 Samples) |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Fixed R=2 | 0.0128 | 0.1944 | 0.7087 | 0.0000 | 0.0000 | – | 3/4 |
+| PonderNet R=4 | 0.0124 | 0.1955 | **0.7203** | 0.0000 | 0.0000 | 1.010 | 3/4 |
+
+### Interpretation
+
+- Die längere Trainingsdauer verbessert die Memorisation deutlich: Beide Modelle erreichen `3/4` exakt gelöste diagnostizierte Trainingsbeispiele statt `0/4` im vorherigen 5.000-Step-Lauf.
+- PonderNet liegt bei der besten Val-Cell-Accuracy leicht vor der Baseline (`0.7203` vs. `0.7087`). Der Abstand ist klein, aber konsistent mit dem vorherigen Multi-Seed-Signal.
+- Die Val-Loss-Werte sind praktisch gleich (`0.1955` vs. `0.1944`).
+- Beide Modelle erzeugen weiterhin kein vollständig korrektes oder gültiges Validierungs-Board. Mehr Steps allein haben das End-to-End-Problem bisher nicht gelöst.
+- PonderNet hält weiterhin sehr früh (`1.010/4` Schritte) und erreicht den Cell-Accuracy-Vorteil ohne zusätzliche Rechentiefe.
+
+### Entscheidung
+
+Ein weiterer reiner Lauf mit mehr Steps ist vorerst nicht der beste nächste Schritt. Die Lernsignale sind gut, aber die Board-Accuracy bleibt 0. Als nächstes sollten die Validierungs-Outputs auf Near-Misses analysiert werden: Anzahl falscher Zellen pro Puzzle, Positionen der Fehler und ob die Ausgabe formal eine vollständige Sudoku-Lösung enthält. Danach lässt sich entscheiden, ob Decoder, Validator oder Modellkapazität der eigentliche Engpass ist.
+
+Das Script [diagnose_sudoku_near_misses.py](../../scripts/diagnose_sudoku_near_misses.py) ist dafür ergänzt. Der Runner wertet damit für `best.pt` und `last.pt` jeweils 16 Validierungsbeispiele aus und protokolliert pro Puzzle Cell-Accuracy, Anzahl falscher Zellen, Parse-Status, Validity und exakten Board-Treffer.
+
+## Auswertung der Near-Miss-Diagnose vom 21.08.2026
+
+Run-Batch: `runs/sudoku-overfit-20260821-072338/`
+
+Der Runner lief vollständig durch: Unit-Tests, beide Trainingsläufe und alle Teacher-Forcing-/Near-Miss-Diagnosen meldeten `PASS`. Die Near-Miss-Diagnose wurde auf 16 Validierungsbeispiele pro Checkpoint angewendet.
+
+| Modell | Checkpoint | Samples | Cell-Accuracy | Falsche Zellen/Puzzle | Parse-Rate | Validity-Rate | Board-Accuracy |
+|---|---|---:|---:|---:|---:|---:|---:|
+| Fixed R=2 | `best.pt` | 16 | 0.7153 | 23.06 | 1.0000 | 0.0000 | 0.0000 |
+| Fixed R=2 | `last.pt` | 16 | 0.6960 | 24.62 | 1.0000 | 0.0000 | 0.0000 |
+| PonderNet R=4 | `best.pt` | 16 | **0.7261** | **22.19** | 1.0000 | 0.0000 | 0.0000 |
+| PonderNet R=4 | `last.pt` | 16 | **0.7230** | **22.44** | 1.0000 | 0.0000 | 0.0000 |
+
+Die Trainingsmetriken bestätigen das bisherige Bild: Die Fixed-Baseline erreicht beim besten Checkpoint eine Val-Cell-Accuracy von `0.7087`, PonderNet `0.7014`; der Near-Miss-Check liefert für PonderNet trotzdem den leicht besseren Mittelwert. PonderNet hält weiterhin bei etwa `1.013` erwarteten Schritten und nutzt damit praktisch nur einen Reasoning-Schritt.
+
+### Befund
+
+- Alle 64 geprüften Ausgaben (2 Modelle × 2 Checkpoints × 16 Beispiele) sind parsebar. Ein Fehler in Ausgabeformat, Parser oder fehlender Grid-Länge ist daher als Hauptursache unwahrscheinlich.
+- Kein einziges ausgegebenes Board ist gültig oder exakt korrekt. Die Modelle produzieren vollständige Gitter, aber mit vielen Duplikaten in Zeilen, Spalten oder Blöcken.
+- Die Fehler sind breit verteilt: PonderNet `best.pt` liegt im Mittel bei rund 22 falschen Zellen pro Puzzle, nicht bei nur einem einzelnen Off-by-one-Fehler. Das spricht gegen ein reines Checkpoint- oder Stoppkriteriumsproblem.
+- PonderNet ist in diesem Lauf bei Cell-Accuracy und Near-Miss-Abstand leicht besser als die Baseline, aber der Vorteil reicht nicht bis zur Sudoku-Gültigkeit. Die adaptive Rechentiefe ist außerdem faktisch kollabiert auf `≈1/4` Schritte.
+
+### Entscheidung und nächster Handlungsbedarf
+
+Ein weiterer Lauf mit nur mehr Steps ist nicht priorisiert. Als nächstes soll der Einfluss des Decoders getrennt werden:
+
+- [x] Near-Miss-Auswertung für 16 Validierungsbeispiele ergänzt und ausgeführt.
+- [ ] Für dieselben Checkpoints eine constrained-/validity-aware Decoding-Variante testen, die bei jeder Position nur noch zulässige Sudoku-Ziffern zulässt.
+- [ ] Unconstrained gegen constrained Decoding mit identischen Logits vergleichen: Cell-Accuracy, Parse-Rate, Validity-Rate und Board-Accuracy.
+- [ ] Teacher-Forcing und autoregressives Decoding auf denselben Validierungsbeispielen gegenüberstellen, um Exposure Bias von fehlender Sudoku-Repräsentation zu trennen.
+- [ ] Erst wenn constrained Decoding gültige Boards erzeugt, PonderNet-Tiefe (`R=4` versus höhere Tiefe) erneut untersuchen.
+
+Die Near-Miss-Daten zeigen damit: Das Projekt ist nicht an der Ausgabeparsing-Schicht blockiert. Der nächste informative Test ist ein kontrollierter Decoder-Vergleich, nicht ein weiterer breiter Hyperparameter-Sweep.

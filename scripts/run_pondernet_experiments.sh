@@ -192,6 +192,42 @@ run_teacher_forcing_check() {
   return 0
 }
 
+run_near_miss_check() {
+  local name="$1"
+  local run_dir="$2"
+  local checkpoint_name="${3:-best.pt}"
+  local max_samples="${4:-16}"
+  local log_file="${LOG_DIR}/${name}.log"
+  local finished_at
+  local exit_code
+
+  {
+    echo "# Validation near-miss diagnostic"
+    echo "# Run directory: ${run_dir}"
+    echo "# Checkpoint: ${checkpoint_name}"
+    echo "# Max validation samples: ${max_samples}"
+    echo
+  } > "${log_file}"
+
+  set +e
+  uv run python scripts/diagnose_sudoku_near_misses.py "${run_dir}" \
+    --checkpoint "${checkpoint_name}" \
+    --max-samples "${max_samples}" 2>&1 | tee -a "${log_file}"
+  exit_code="${PIPESTATUS[0]}"
+  set -e
+  finished_at="$(date '+%Y-%m-%dT%H:%M:%S%z')"
+
+  if [[ "${exit_code}" -eq 0 ]]; then
+    echo -e "PASS\t${finished_at}\t${name}\t0\t${log_file}" >> "${STATUS_FILE}"
+    LAST_EXIT_CODE=0
+  else
+    echo -e "FAIL\t${finished_at}\t${name}\t${exit_code}\t${log_file}" >> "${STATUS_FILE}"
+    echo "Near-Miss-Check ${name} fehlgeschlagen." >&2
+    LAST_EXIT_CODE="${exit_code}"
+  fi
+  return 0
+}
+
 run_validate() {
   local log_file="${LOG_DIR}/config-validation.log"
   set +e
@@ -273,6 +309,8 @@ for seed in "${SEEDS[@]}"; do
     FIXED_RUN_DIR="$(latest_run_dir)"
     run_teacher_forcing_check "00-fixed-r2-seed-${seed}-best-teacher-forcing" "${FIXED_RUN_DIR}" "best.pt" 4
     run_teacher_forcing_check "00-fixed-r2-seed-${seed}-final-teacher-forcing" "${FIXED_RUN_DIR}" "last.pt" 4
+    run_near_miss_check "00-fixed-r2-seed-${seed}-best-near-misses" "${FIXED_RUN_DIR}" "best.pt" 16
+    run_near_miss_check "00-fixed-r2-seed-${seed}-final-near-misses" "${FIXED_RUN_DIR}" "last.pt" 16
   fi
 
   # Selected PonderNet candidate from the regularization sweep.
@@ -287,6 +325,8 @@ for seed in "${SEEDS[@]}"; do
     PONDER_LAMBDA04_RUN_DIR="$(latest_run_dir)"
     run_teacher_forcing_check "01-ponder-r4-lambda04-seed-${seed}-best-teacher-forcing" "${PONDER_LAMBDA04_RUN_DIR}" "best.pt" 4
     run_teacher_forcing_check "01-ponder-r4-lambda04-seed-${seed}-final-teacher-forcing" "${PONDER_LAMBDA04_RUN_DIR}" "last.pt" 4
+    run_near_miss_check "01-ponder-r4-lambda04-seed-${seed}-best-near-misses" "${PONDER_LAMBDA04_RUN_DIR}" "best.pt" 16
+    run_near_miss_check "01-ponder-r4-lambda04-seed-${seed}-final-near-misses" "${PONDER_LAMBDA04_RUN_DIR}" "last.pt" 16
   fi
 done
 
